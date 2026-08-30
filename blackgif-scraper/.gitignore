@@ -1,0 +1,14 @@
+# BlackGif Scraper
+node_modules/
+dist/
+.venv/
+venv/
+__pycache__/
+*.pyc
+.env
+data/
+*.db
+.DS_Store
+frontend/dist/
+*.egg-info/
+.pytest_cache/

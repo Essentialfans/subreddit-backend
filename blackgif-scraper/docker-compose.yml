@@ -1,0 +1,16 @@
+services:
+  blackgif:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      CORS_ORIGINS: "*"
+      SYNC_INTERVAL_MINUTES: "60"
+      DEFAULT_MIN_VIEWS: "10000"
+      # AUTH_TOKEN: "change-me"   # uncomment for multi-user deploy lock
+    volumes:
+      - blackgif-data:/data
+    restart: unless-stopped
+
+volumes:
+  blackgif-data:
