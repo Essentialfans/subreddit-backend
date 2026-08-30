@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 
-type Mode = "link" | "login";
+type Mode = "link" | "login" | "signup";
 
 interface CompletedLink {
   mode: "link";
@@ -21,18 +21,33 @@ interface CompletedLogin {
   telegramUsername: string | null;
 }
 
-type CompletedResult = CompletedLink | CompletedLogin;
+interface CompletedSignup {
+  mode: "signup";
+  code: string;
+  telegram: {
+    id: number;
+    username: string | null;
+    firstName: string | null;
+  };
+}
+
+export type CompletedTelegramResult =
+  | CompletedLink
+  | CompletedLogin
+  | CompletedSignup;
 
 interface TelegramDeepLinkAuthProps {
   mode: Mode;
-  onCompleted: (result: CompletedResult) => void | Promise<void>;
+  onCompleted: (result: CompletedTelegramResult) => void | Promise<void>;
   onError?: (message: string) => void;
+  autoStart?: boolean;
 }
 
 export function TelegramDeepLinkAuth({
   mode,
   onCompleted,
   onError,
+  autoStart = false,
 }: TelegramDeepLinkAuthProps) {
   const [deepLink, setDeepLink] = useState<string | null>(null);
   const [code, setCode] = useState<string | null>(null);
@@ -40,6 +55,7 @@ export function TelegramDeepLinkAuth({
   const [error, setError] = useState("");
   const [isStarting, setIsStarting] = useState(false);
   const completingRef = useRef(false);
+  const autoStartedRef = useRef(false);
 
   const reportError = useCallback(
     (message: string) => {
@@ -79,6 +95,13 @@ export function TelegramDeepLinkAuth({
   }, [mode, reportError]);
 
   useEffect(() => {
+    if (autoStart && !autoStartedRef.current) {
+      autoStartedRef.current = true;
+      void start();
+    }
+  }, [autoStart, start]);
+
+  useEffect(() => {
     if (!code || status !== "pending") return;
 
     let cancelled = false;
@@ -108,7 +131,7 @@ export function TelegramDeepLinkAuth({
           if (completingRef.current) return;
           completingRef.current = true;
           setStatus("completed");
-          await onCompleted(payload as CompletedResult);
+          await onCompleted(payload as CompletedTelegramResult);
           return;
         }
 
@@ -148,21 +171,24 @@ export function TelegramDeepLinkAuth({
     );
   }
 
+  const startLabel =
+    mode === "link"
+      ? "Link Telegram via bot"
+      : mode === "signup"
+        ? "Verify with Telegram"
+        : "Continue with Telegram bot";
+
   return (
     <div className="space-y-3">
       {!deepLink ? (
         <Button
           type="button"
-          variant="secondary"
+          variant={mode === "signup" ? "default" : "secondary"}
           className="w-full"
           onClick={() => void start()}
           disabled={isStarting}
         >
-          {isStarting
-            ? "Preparing…"
-            : mode === "link"
-              ? "Link Telegram via bot"
-              : "Continue with Telegram bot"}
+          {isStarting ? "Preparing…" : startLabel}
         </Button>
       ) : (
         <>
@@ -175,7 +201,7 @@ export function TelegramDeepLinkAuth({
             {status === "pending"
               ? "Waiting for you to press Start in Telegram…"
               : status === "completed"
-                ? "Verified. Finishing…"
+                ? "Verified…"
                 : status === "expired"
                   ? "Expired."
                   : null}

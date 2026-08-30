@@ -1,7 +1,7 @@
 -- Optional durable store for Telegram deep-link codes (local can use in-memory).
 create table if not exists public.telegram_auth_codes (
   code text primary key,
-  mode text not null check (mode in ('link', 'login')),
+  mode text not null check (mode in ('link', 'login', 'signup')),
   user_id uuid references auth.users on delete cascade,
   telegram_id bigint,
   telegram_username text,

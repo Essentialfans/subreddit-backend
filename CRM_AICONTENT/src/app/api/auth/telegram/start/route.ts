@@ -12,7 +12,7 @@ export async function POST(request: Request) {
     const body = await request.json().catch(() => ({}));
     const mode = (body?.mode as TelegramAuthMode) ?? "login";
 
-    if (mode !== "link" && mode !== "login") {
+    if (mode !== "link" && mode !== "login" && mode !== "signup") {
       return NextResponse.json({ error: "Invalid mode." }, { status: 400 });
     }
 

@@ -21,7 +21,10 @@ export async function GET(request: Request) {
 
     if (!entry) {
       return NextResponse.json(
-        { status: "unknown", error: "Code not found or server restarted. Start again." },
+        {
+          status: "unknown",
+          error: "Code not found or server restarted. Start again.",
+        },
         { status: 404 }
       );
     }
@@ -48,6 +51,45 @@ export async function GET(request: Request) {
       );
     }
 
+    // Signup: stop after Telegram claim — account form comes next.
+    if (entry.mode === "signup") {
+      if (entry.status === "consumed") {
+        return NextResponse.json({
+          status: "error",
+          error: "This Telegram signup code was already used. Start again.",
+        });
+      }
+
+      const admin = createAdminClient();
+      const { data: existing } = await admin
+        .from("profiles")
+        .select("id")
+        .eq("telegram_id", entry.telegramId)
+        .maybeSingle();
+
+      if (existing) {
+        return NextResponse.json(
+          {
+            status: "error",
+            error:
+              "This Telegram account already has an AiInstaReels user. Sign in instead.",
+          },
+          { status: 409 }
+        );
+      }
+
+      return NextResponse.json({
+        status: "completed",
+        mode: "signup",
+        code: entry.code,
+        telegram: {
+          id: entry.telegramId,
+          username: entry.telegramUsername,
+          firstName: entry.telegramFirstName,
+        },
+      });
+    }
+
     const admin = createAdminClient();
     const fields = telegramProfileFields(entry);
 
@@ -59,7 +101,10 @@ export async function GET(request: Request) {
 
       if (!user || (entry.userId && entry.userId !== user.id)) {
         return NextResponse.json(
-          { status: "error", error: "Sign in again to finish linking Telegram." },
+          {
+            status: "error",
+            error: "Sign in again to finish linking Telegram.",
+          },
           { status: 401 }
         );
       }
@@ -128,7 +173,7 @@ export async function GET(request: Request) {
         {
           status: "error",
           error:
-            "No AiInstaReels account is linked to this Telegram user. Sign up with email first, then link Telegram in Settings.",
+            "No AiInstaReels account is linked to this Telegram user. Sign up with Telegram first.",
         },
         { status: 404 }
       );

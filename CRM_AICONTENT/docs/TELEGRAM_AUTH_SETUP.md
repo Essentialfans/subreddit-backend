@@ -34,11 +34,11 @@ SUPABASE_SERVICE_ROLE_KEY=...
 
 | Step | What happens |
 |------|----------------|
-| Sign up | Email + password |
-| Settings | Click **Link Telegram via bot** → Start the bot in Telegram |
-| Jobs | Requires `telegram_verified` |
-| Sign in later | Email+password **or** **Continue with Telegram bot** |
+| **Sign up** | **1)** Verify Telegram bot → **2)** name, email, password |
+| Every user | Must have Telegram linked at signup (cannot skip) |
+| Sign in later | Email+password **or** Telegram bot |
 | Forgot password | `/forgot-password` |
+| Settings | Shows Telegram status / re-link if needed |
 
 ## Production later
 

@@ -1,7 +1,7 @@
 import { randomBytes } from "crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 
-export type TelegramAuthMode = "link" | "login";
+export type TelegramAuthMode = "link" | "login" | "signup";
 export type TelegramCodeStatus =
   | "pending"
   | "claimed"
@@ -214,7 +214,9 @@ export async function syncTelegramClaims() {
       text:
         entry.mode === "link"
           ? `✅ Linked to AiInstaReels as ${usernameLabel}.\nReturn to the app — it should update automatically.`
-          : `✅ Telegram verified as ${usernameLabel}.\nReturn to the app to finish signing in.`,
+          : entry.mode === "signup"
+            ? `✅ Telegram verified as ${usernameLabel}.\nReturn to the app and finish creating your account (name, email, password).`
+            : `✅ Telegram verified as ${usernameLabel}.\nReturn to the app to finish signing in.`,
     }).catch(() => undefined);
   }
 }
