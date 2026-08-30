@@ -41,6 +41,11 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# Cloudflare / OpenNext
+.open-next
+.dev.vars
+.wrangler
+
 # Local transfer artifacts
 docs/chat/*.jsonl
 CHAT_CONTEXT.md
