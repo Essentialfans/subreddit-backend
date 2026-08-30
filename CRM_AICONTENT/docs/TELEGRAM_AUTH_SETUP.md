@@ -2,61 +2,44 @@
 
 AiInstaReels uses:
 
-1. **Email + password** (Supabase Auth) as the account
+1. **Email + password** (Supabase Auth)
 2. **Forgot password** email reset
-3. **Telegram Login Widget** for one-time link + optional Telegram login
-4. **Telegram id + @username** stored on `profiles` for anti-scam review
+3. **Telegram bot deep link** (works on localhost — no public domain needed)
+4. Stores `telegram_id` + `@username` on `profiles` for anti-scam review
 
-## 1. Run the SQL migration
+> BotFather **rejects `localhost`** for the Login Widget `/setdomain`.  
+> So we use: app → open `@yourbot?start=CODE` → bot captures your Telegram identity → app finishes link/login.
 
-In Supabase → **SQL Editor**, run:
+## 1. SQL (profiles telegram columns)
 
-`supabase/migrations/20260830_telegram_auth.sql`
+Already done if you ran `20260830_telegram_auth.sql`.
 
-This adds `telegram_id`, `telegram_username`, `telegram_verified`, etc. on `profiles`.
+Optional durable codes table (not required for local single-server):
 
-## 2. Create a Telegram bot
+`supabase/migrations/20260830_telegram_deep_link_codes.sql`
 
-1. Open [@BotFather](https://t.me/BotFather) in Telegram
-2. `/newbot` → pick a name and username (e.g. `AiInstaReelsBot`)
-3. Copy the **bot token**
-4. Run `/setdomain` for that bot and set:
-   - Dev: `localhost` (Telegram Login Widget supports localhost for testing)
-   - Prod: your real domain later (e.g. `app.example.com`)
+## 2. BotFather
 
-## 3. Env vars
-
-Add to `.env.local` (never commit secrets):
+1. Create bot → copy token  
+2. **You do NOT need `/setdomain` for this deep-link flow**  
+3. Put in `.env.local`:
 
 ```env
-SUPABASE_SERVICE_ROLE_KEY=...   # Project Settings → API → service_role
-TELEGRAM_BOT_TOKEN=...          # from BotFather
-NEXT_PUBLIC_TELEGRAM_BOT_USERNAME=YourBotUsernameWithoutAt
+TELEGRAM_BOT_TOKEN=...
+NEXT_PUBLIC_TELEGRAM_BOT_USERNAME=ainstareelsbot
+SUPABASE_SERVICE_ROLE_KEY=...
 ```
 
-Restart `npm run dev` after changing env.
-
-## 4. Auth redirect URLs
-
-Supabase → Authentication → URL Configuration:
-
-- Site URL: `http://localhost:3000`
-- Redirect URLs include:
-  - `http://localhost:3000/**`
-  - `http://localhost:3000/auth/confirm`
-
-## 5. User flow
+## 3. User flow
 
 | Step | What happens |
 |------|----------------|
 | Sign up | Email + password |
-| Settings | Click Telegram Login Widget → link once |
+| Settings | Click **Link Telegram via bot** → Start the bot in Telegram |
 | Jobs | Requires `telegram_verified` |
-| Sign in later | Email+password **or** Telegram (if linked) |
-| Forgot password | `/forgot-password` → email link → `/reset-password` |
+| Sign in later | Email+password **or** **Continue with Telegram bot** |
+| Forgot password | `/forgot-password` |
 
-## Security notes
+## Production later
 
-- Trust **Telegram id**, not username alone (usernames can change or be empty)
-- Bot token and service role key are **server-only**
-- Telegram proves account ownership; it does not prove someone is trustworthy — use @username for manual review
+When you have a real domain, you can optionally add the Login Widget again with `/setdomain yourdomain.com`. Deep-link bot auth can stay as the primary method.

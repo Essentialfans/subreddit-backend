@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { DashboardHeader } from "@/components/layout/dashboard-header";
-import { TelegramLoginButton } from "@/components/auth/telegram-login-button";
+import { TelegramDeepLinkAuth } from "@/components/auth/telegram-deep-link-auth";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -12,7 +12,6 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { fetchOwnTelegramProfile } from "@/lib/profiles";
-import type { TelegramAuthPayload } from "@/lib/telegram/verify";
 
 export default function SettingsPage() {
   const [telegramUsername, setTelegramUsername] = useState<string | null>(null);
@@ -21,7 +20,6 @@ export default function SettingsPage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [isLoading, setIsLoading] = useState(true);
-  const [isLinking, setIsLinking] = useState(false);
 
   const refresh = useCallback(async () => {
     setIsLoading(true);
@@ -42,34 +40,6 @@ export default function SettingsPage() {
     void refresh();
   }, [refresh]);
 
-  async function handleTelegramAuth(telegram: TelegramAuthPayload) {
-    setError("");
-    setSuccess("");
-    setIsLinking(true);
-
-    try {
-      const response = await fetch("/api/auth/telegram", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: "link", telegram }),
-      });
-      const payload = await response.json();
-
-      if (!response.ok) {
-        throw new Error(payload.error ?? "Could not link Telegram.");
-      }
-
-      setTelegramId(payload.profile.telegramId);
-      setTelegramUsername(payload.profile.telegramUsername);
-      setVerified(Boolean(payload.profile.telegramVerified));
-      setSuccess("Telegram linked. Your account is verified.");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not link Telegram.");
-    } finally {
-      setIsLinking(false);
-    }
-  }
-
   return (
     <div className="space-y-6">
       <DashboardHeader
@@ -81,9 +51,9 @@ export default function SettingsPage() {
         <CardHeader>
           <CardTitle>Telegram verification</CardTitle>
           <CardDescription>
-            Link your Telegram account once so we can see your @username and
-            reduce fake accounts. After linking, you can also sign in with
-            Telegram.
+            Open our bot once to link your Telegram account. We store your
+            Telegram id and @username for anti-scam review. No public website
+            domain required for local use.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -96,27 +66,30 @@ export default function SettingsPage() {
                 {telegramUsername ? `@${telegramUsername}` : "No username set"}
                 {telegramId ? ` · id ${telegramId}` : null}
               </p>
-              <p className="mt-2 text-xs text-muted-foreground">
-                You can re-link to refresh your username if it changed.
-              </p>
             </div>
           ) : (
             <div className="rounded-md border border-border bg-muted/40 px-4 py-3 text-sm">
               <p className="font-medium text-accent-orange">Not verified yet</p>
               <p className="mt-1 text-muted-foreground">
-                Link Telegram to unlock full job creation and so we can review
-                your public username.
+                Link Telegram to unlock job creation.
               </p>
             </div>
           )}
 
           {error ? <p className="text-sm text-accent-red">{error}</p> : null}
           {success ? <p className="text-sm text-accent-green">{success}</p> : null}
-          {isLinking ? (
-            <p className="text-sm text-muted-foreground">Linking Telegram…</p>
-          ) : null}
 
-          <TelegramLoginButton onAuth={handleTelegramAuth} />
+          <TelegramDeepLinkAuth
+            mode="link"
+            onError={setError}
+            onCompleted={async (result) => {
+              if (result.mode !== "link") return;
+              setTelegramId(result.profile.telegramId);
+              setTelegramUsername(result.profile.telegramUsername);
+              setVerified(Boolean(result.profile.telegramVerified));
+              setSuccess("Telegram linked. Your account is verified.");
+            }}
+          />
 
           <Button type="button" variant="secondary" onClick={() => void refresh()}>
             Refresh status

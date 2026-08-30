@@ -6,8 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Sparkles } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { createClient } from "@/lib/supabase/client";
-import type { TelegramAuthPayload } from "@/lib/telegram/verify";
-import { TelegramLoginButton } from "@/components/auth/telegram-login-button";
+import { TelegramDeepLinkAuth } from "@/components/auth/telegram-deep-link-auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -28,7 +27,6 @@ export function LoginForm() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isTelegramLoading, setIsTelegramLoading] = useState(false);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -41,41 +39,6 @@ export function LoginForm() {
       setError(err instanceof Error ? err.message : "Sign in failed.");
     } finally {
       setIsSubmitting(false);
-    }
-  }
-
-  async function handleTelegramAuth(telegram: TelegramAuthPayload) {
-    setError("");
-    setIsTelegramLoading(true);
-
-    try {
-      const response = await fetch("/api/auth/telegram", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: "login", telegram }),
-      });
-      const payload = await response.json();
-
-      if (!response.ok) {
-        throw new Error(payload.error ?? "Telegram sign in failed.");
-      }
-
-      const supabase = createClient();
-      const { error: otpError } = await supabase.auth.verifyOtp({
-        type: "email",
-        token_hash: payload.tokenHash,
-      });
-
-      if (otpError) {
-        throw new Error(otpError.message);
-      }
-
-      router.push("/");
-      router.refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Telegram sign in failed.");
-    } finally {
-      setIsTelegramLoading(false);
     }
   }
 
@@ -151,13 +114,24 @@ export function LoginForm() {
               <div className="h-px flex-1 bg-border" />
             </div>
 
-            <div className="space-y-2">
-              <p className="text-center text-xs text-muted-foreground">
-                Continue with Telegram
-                {isTelegramLoading ? "…" : ""}
-              </p>
-              <TelegramLoginButton onAuth={handleTelegramAuth} />
-            </div>
+            <TelegramDeepLinkAuth
+              mode="login"
+              onError={setError}
+              onCompleted={async (result) => {
+                if (result.mode !== "login") return;
+                const supabase = createClient();
+                const { error: otpError } = await supabase.auth.verifyOtp({
+                  type: "email",
+                  token_hash: result.tokenHash,
+                });
+                if (otpError) {
+                  setError(otpError.message);
+                  return;
+                }
+                router.push("/");
+                router.refresh();
+              }}
+            />
 
             <p className="mt-4 text-center text-sm text-muted-foreground">
               Don&apos;t have an account?{" "}
