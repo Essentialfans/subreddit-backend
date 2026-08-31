@@ -7,18 +7,8 @@ from sqlalchemy.orm import Session
 
 from ..database import SessionLocal, get_db
 from ..models import Account, MediaItem, SyncJob
-from ..schemas import DownloadUrlRequest, JobOut, MediaOut, StatsOut, SyncRequest
+from ..schemas import CreatorFolderOut, DownloadUrlRequest, JobOut, MediaOut, StatsOut, SyncRequest
 from ..services import sync as sync_service
-
-# Back-compat aliases if schemas use alternate names
-try:
-    DownloadUrlRequest
-except NameError:
-    from ..schemas import DownloadUrlRequest as DownloadUrlRequest  # type: ignore
-try:
-    StatsOut
-except NameError:
-    from ..schemas import StatsOut as StatsOut  # type: ignore
 
 router = APIRouter(tags=["media"])
 
@@ -28,6 +18,11 @@ def _media_out(db: Session, item: MediaItem) -> MediaOut:
     if item.account_id:
         acc = db.get(Account, item.account_id)
         username = acc.username if acc else None
+    if not username and item.local_path:
+        try:
+            username = Path(item.local_path).parent.name
+        except Exception:
+            username = None
     return MediaOut(
         id=item.id,
         gif_id=item.gif_id,
@@ -47,12 +42,18 @@ def _media_out(db: Session, item: MediaItem) -> MediaOut:
     )
 
 
+@router.get("/library/folders", response_model=list[CreatorFolderOut])
+def list_folders(db: Session = Depends(get_db)):
+    return sync_service.list_creator_folders(db)
+
+
 @router.get("/library", response_model=list[MediaOut])
 def list_library(
     status: str | None = None,
     account_id: int | None = None,
+    username: str | None = None,
     q: str | None = None,
-    limit: int = Query(100, ge=1, le=500),
+    limit: int = Query(200, ge=1, le=500),
     db: Session = Depends(get_db),
 ):
     stmt = select(MediaItem).order_by(MediaItem.discovered_at.desc()).limit(limit)
@@ -60,6 +61,17 @@ def list_library(
         stmt = stmt.where(MediaItem.status == status)
     if account_id:
         stmt = stmt.where(MediaItem.account_id == account_id)
+    elif username:
+        uname = username.strip().lstrip("@").lower()
+        acc = db.scalar(select(Account).where(Account.username == uname))
+        if acc:
+            stmt = stmt.where(MediaItem.account_id == acc.id)
+        else:
+            # Orphan folder filter by path
+            stmt = stmt.where(
+                MediaItem.account_id.is_(None),
+                MediaItem.local_path.ilike(f"%/{uname}/%"),
+            )
     if q:
         like = f"%{q}%"
         stmt = stmt.where((MediaItem.title.ilike(like)) | (MediaItem.gif_id.ilike(like)))

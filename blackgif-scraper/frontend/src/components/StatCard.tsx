@@ -75,7 +75,7 @@ export function PageHeader({
   title,
   children,
 }: {
-  title: string
+  title: ReactNode
   children?: ReactNode
 }) {
   return (

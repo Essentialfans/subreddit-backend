@@ -63,6 +63,21 @@ export type MediaItem = {
   downloaded_at: string | null
 }
 
+export type CreatorFolder = {
+  username: string
+  display_name: string | null
+  account_id: number | null
+  avatar_url: string | null
+  profile_url: string
+  folder_path: string
+  tracked: boolean
+  media_count: number
+  downloaded_count: number
+  total_views: number
+  first_post_at: string | null
+  last_synced_at: string | null
+}
+
 export type Job = {
   id: number
   kind: string
@@ -107,13 +122,16 @@ export const api = {
   deleteAccount: (id: number) => request<void>(`/api/accounts/${id}`, { method: 'DELETE' }),
   syncAccount: (id: number) =>
     request<{ ok: boolean }>(`/api/accounts/${id}/sync`, { method: 'POST' }),
-  library: (params?: { status?: string; q?: string }) => {
+  library: (params?: { status?: string; q?: string; account_id?: number; username?: string }) => {
     const qs = new URLSearchParams()
     if (params?.status) qs.set('status', params.status)
     if (params?.q) qs.set('q', params.q)
+    if (params?.account_id) qs.set('account_id', String(params.account_id))
+    if (params?.username) qs.set('username', params.username)
     const s = qs.toString()
     return request<MediaItem[]>(`/api/library${s ? `?${s}` : ''}`)
   },
+  libraryFolders: () => request<CreatorFolder[]>('/api/library/folders'),
   downloadUrl: (url: string) =>
     request<MediaItem>('/api/download', { method: 'POST', body: JSON.stringify({ url }) }),
   downloadMedia: (id: number) =>

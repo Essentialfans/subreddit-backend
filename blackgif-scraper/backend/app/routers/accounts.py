@@ -73,6 +73,7 @@ async def create_account(payload: AccountCreate, db: Session = Depends(get_db)):
     db.add(acc)
     db.commit()
     db.refresh(acc)
+    sync_service.write_creator_profile(db, username=acc.username, account=acc)
     return _out(db, acc)
 
 

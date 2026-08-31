@@ -57,6 +57,23 @@ class MediaOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class CreatorFolderOut(BaseModel):
+    """One library folder per creator — profile + aggregated stats."""
+
+    username: str
+    display_name: str | None = None
+    account_id: int | None = None
+    avatar_url: str | None = None
+    profile_url: str
+    folder_path: str
+    tracked: bool = False
+    media_count: int = 0
+    downloaded_count: int = 0
+    total_views: int = 0
+    first_post_at: datetime | None = None
+    last_synced_at: datetime | None = None
+
+
 class DownloadUrlRequest(BaseModel):
     url: str = Field(min_length=8)
 
