@@ -51,6 +51,8 @@ app = FastAPI(title=settings.app_name, lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list or ["*"],
+    # Chrome/Firefox extension origins (popup + content pages)
+    allow_origin_regex=r"^chrome-extension://.*$|^moz-extension://.*$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

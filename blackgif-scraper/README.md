@@ -9,6 +9,7 @@ Personal RedGifs account tracker + viral downloader with a dark analytics dashbo
 - Track RedGifs usernames with a per-account viral threshold (min views)
 - Sync feeds, queue viral posts, download via direct CDN URLs
 - Dashboard with stats, charts, jobs, and library
+- Chrome/Edge extension that syncs Track/Download actions with the local API
 - Local-first; Docker-ready for later multi-user deploy (`AUTH_TOKEN`)
 
 ## Quick start (local)
@@ -32,6 +33,17 @@ npm run dev
 ```
 
 Open http://localhost:5173
+
+## Browser extension
+
+Chrome/Edge companion lives in `extension/`.
+
+1. Start the backend on port 8000
+2. Open `chrome://extensions` → Developer mode → **Load unpacked** → select `blackgif-scraper/extension`
+3. On RedGifs: **Track account** (profile) or **Download** (watch page)
+4. Popup shows Online/Offline, stats, and **Sync all**
+
+See `extension/README.md` for details.
 
 ## Docker (deploy-ready)
 
@@ -60,6 +72,7 @@ Set `AUTH_TOKEN` in `docker-compose.yml` to require a Bearer token on write APIs
 blackgif-scraper/
   backend/app/     FastAPI + SQLite + RedGifs client
   frontend/        React + Vite + Tailwind dashboard
+  extension/       Chrome/Edge MV3 companion
   data/            DB + downloads (gitignored)
   Dockerfile
   docker-compose.yml
