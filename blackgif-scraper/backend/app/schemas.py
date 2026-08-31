@@ -76,11 +76,12 @@ class CreatorFolderOut(BaseModel):
 
 class DownloadUrlRequest(BaseModel):
     url: str = Field(min_length=8)
+    save_file: bool = False
 
 
 class SyncRequest(BaseModel):
     account_id: int | None = None
-    download: bool = True
+    download: bool = False
 
 
 class JobOut(BaseModel):

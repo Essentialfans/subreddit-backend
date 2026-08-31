@@ -132,12 +132,20 @@ export const api = {
     return request<MediaItem[]>(`/api/library${s ? `?${s}` : ''}`)
   },
   libraryFolders: () => request<CreatorFolder[]>('/api/library/folders'),
-  downloadUrl: (url: string) =>
-    request<MediaItem>('/api/download', { method: 'POST', body: JSON.stringify({ url }) }),
+  downloadUrl: (url: string, saveFile = true) =>
+    request<MediaItem>('/api/download', {
+      method: 'POST',
+      body: JSON.stringify({ url, save_file: saveFile }),
+    }),
+  addToLibrary: (url: string) =>
+    request<MediaItem>('/api/download', {
+      method: 'POST',
+      body: JSON.stringify({ url, save_file: false }),
+    }),
   downloadMedia: (id: number) =>
     request<MediaItem>(`/api/library/${id}/download`, { method: 'POST' }),
   deleteMedia: (id: number) => request<void>(`/api/library/${id}`, { method: 'DELETE' }),
-  syncAll: (download = true) =>
+  syncAll: (download = false) =>
     request<{ ok: boolean }>('/api/sync', {
       method: 'POST',
       body: JSON.stringify({ download }),

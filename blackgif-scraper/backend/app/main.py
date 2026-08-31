@@ -22,7 +22,7 @@ async def scheduled_sync() -> None:
     db = SessionLocal()
     try:
         logger.info("Scheduled sync starting")
-        await sync_service.sync_all(db, download=True)
+        await sync_service.sync_all(db, download=False)
     except Exception:
         logger.exception("Scheduled sync failed")
     finally:

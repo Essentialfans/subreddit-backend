@@ -258,11 +258,11 @@ async function loadPageContext() {
 els.download.addEventListener('click', async () => {
   if (!pageCtx?.url) return
   els.download.disabled = true
-  els.download.textContent = 'Downloading…'
+  els.download.textContent = 'Saving…'
   try {
-    const item = await send('DOWNLOAD_URL', { url: pageCtx.url })
-    toast(item.status === 'done' ? `Saved ${item.gif_id}` : item.status)
-    els.download.textContent = item.status === 'done' ? 'In library ✓' : 'Add to library'
+    const item = await send('ADD_TO_LIBRARY', { url: pageCtx.url })
+    toast(item.status === 'done' ? `Saved file ${item.gif_id}` : `Added ${item.gif_id} (preview only)`)
+    els.download.textContent = item.status === 'done' ? 'On disk ✓' : 'In library ✓'
     await refreshStats()
   } catch (err) {
     toast(err.message)
@@ -297,8 +297,8 @@ els.pasteDl.addEventListener('click', async () => {
   els.pasteDl.disabled = true
   els.pasteDl.textContent = '…'
   try {
-    const item = await send('DOWNLOAD_URL', { url: parsed.url })
-    toast(item.status === 'done' ? `Saved ${item.gif_id}` : item.status)
+    const item = await send('ADD_TO_LIBRARY', { url: parsed.url })
+    toast(item.status === 'done' ? `Saved file ${item.gif_id}` : `Added ${item.gif_id} (preview only)`)
     pageCtx = { ...(pageCtx || {}), kind: 'watch', ...parsed }
     applyPageContext(pageCtx)
     await refreshStats()

@@ -92,7 +92,7 @@ async function handleMessage(message) {
           }),
         })
         try {
-          await api(`/api/accounts/${account.id}/sync`, { method: 'POST' })
+          await api(`/api/accounts/${account.id}/sync?download=false`, { method: 'POST' })
         } catch {
           /* sync is best-effort */
         }
@@ -114,7 +114,18 @@ async function handleMessage(message) {
       if (!url) throw new Error('Missing URL')
       const item = await api('/api/download', {
         method: 'POST',
-        body: JSON.stringify({ url }),
+        body: JSON.stringify({ url, save_file: message.saveFile !== false }),
+      })
+      await refreshBadge()
+      return item
+    }
+
+    case 'ADD_TO_LIBRARY': {
+      const url = String(message.url || '').trim()
+      if (!url) throw new Error('Missing URL')
+      const item = await api('/api/download', {
+        method: 'POST',
+        body: JSON.stringify({ url, save_file: false }),
       })
       await refreshBadge()
       return item
@@ -123,7 +134,7 @@ async function handleMessage(message) {
     case 'SYNC_ALL': {
       const result = await api('/api/sync', {
         method: 'POST',
-        body: JSON.stringify({ download: true }),
+        body: JSON.stringify({ download: false }),
       })
       await refreshBadge()
       return result

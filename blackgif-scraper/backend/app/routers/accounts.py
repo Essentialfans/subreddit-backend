@@ -116,7 +116,7 @@ def _bg_sync(account_id: int, download: bool) -> None:
 def sync_one(
     account_id: int,
     background_tasks: BackgroundTasks,
-    download: bool = True,
+    download: bool = False,
     db: Session = Depends(get_db),
 ):
     acc = db.get(Account, account_id)

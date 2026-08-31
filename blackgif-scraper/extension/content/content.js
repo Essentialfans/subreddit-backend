@@ -310,7 +310,7 @@ async function refreshPanel() {
       downloadBtn.disabled = true
       downloadBtn.textContent = '…'
       try {
-        const item = await send('DOWNLOAD_URL', { url: ctx.url })
+        const item = await send('DOWNLOAD_URL', { url: ctx.url, saveFile: true })
         const ok = item.status === 'done'
         setMeta(`${item.status}: ${item.gif_id}`, ok ? 'ok' : 'err')
         downloadBtn.textContent = ok ? 'Saved ✓' : 'Retry'

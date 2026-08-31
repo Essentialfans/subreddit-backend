@@ -58,7 +58,10 @@ def list_library(
 ):
     stmt = select(MediaItem).order_by(MediaItem.discovered_at.desc()).limit(limit)
     if status:
-        stmt = stmt.where(MediaItem.status == status)
+        if status == "discovered":
+            stmt = stmt.where(MediaItem.status.in_(["discovered", "queued", "skipped"]))
+        else:
+            stmt = stmt.where(MediaItem.status == status)
     if account_id:
         stmt = stmt.where(MediaItem.account_id == account_id)
     elif username:
@@ -81,7 +84,7 @@ def list_library(
 @router.post("/download", response_model=MediaOut)
 async def download_url(payload: DownloadUrlRequest, db: Session = Depends(get_db)):
     try:
-        item = await sync_service.download_by_url(db, payload.url)
+        item = await sync_service.add_by_url(db, payload.url, save_file=payload.save_file)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     except Exception as exc:

@@ -51,7 +51,7 @@ export function Dashboard() {
   async function syncAll() {
     setBusy(true)
     try {
-      await api.syncAll(true)
+      await api.syncAll(false)
       await load()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Sync failed')
@@ -91,7 +91,7 @@ export function Dashboard() {
         </div>
         <button className="btn-primary flex items-center gap-2 px-4 py-2.5 text-sm" onClick={syncAll} disabled={busy}>
           <RefreshCw size={16} className={busy ? 'animate-spin' : ''} />
-          Sync all
+          Sync all (catalog only)
         </button>
       </PageHeader>
 

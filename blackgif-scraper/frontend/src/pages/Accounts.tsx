@@ -76,7 +76,7 @@ export function Accounts() {
           className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-3 text-sm outline-none focus:border-[var(--color-blue)]"
           value={minViews}
           onChange={(e) => setMinViews(Number(e.target.value))}
-          title="Minimum views (viral threshold)"
+          title="Minimum views to highlight as viral (does not auto-download)"
         />
         <button className="btn-primary flex items-center justify-center gap-2 px-5 py-3 text-sm" disabled={busy}>
           <Plus size={16} />

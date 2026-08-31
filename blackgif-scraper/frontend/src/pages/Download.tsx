@@ -31,7 +31,8 @@ export function DownloadPage() {
 
       <div className="card mx-auto max-w-2xl p-6">
         <p className="mb-4 text-sm text-[var(--color-muted)]">
-          Paste a RedGifs watch URL or gif ID. Files save under your local downloads folder.
+          Paste a RedGifs watch URL to save the file immediately. To browse without saving, track the account and use
+          Library instead.
         </p>
         <form onSubmit={onSubmit} className="flex flex-col gap-3 sm:flex-row">
           <input

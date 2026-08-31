@@ -93,7 +93,7 @@ def write_creator_profile(
     return path
 
 
-async def sync_account(db: Session, account: Account, *, download: bool = True) -> SyncJob:
+async def sync_account(db: Session, account: Account, *, download: bool = False) -> SyncJob:
     job = SyncJob(
         kind="sync",
         status="running",
@@ -118,7 +118,7 @@ async def sync_account(db: Session, account: Account, *, download: bool = True) 
         by_id = {g.gif_id: g for g in trending + newest}
 
         found = 0
-        queued_ids: list[int] = []
+        new_ids: list[int] = []
         for info in by_id.values():
             existing = db.scalar(select(MediaItem).where(MediaItem.gif_id == info.gif_id))
             if existing:
@@ -127,10 +127,7 @@ async def sync_account(db: Session, account: Account, *, download: bool = True) 
                     existing.thumbnail_url = info.thumbnail_url
                 continue
 
-            status = "queued" if info.views >= account.min_views else "skipped"
-            if status == "queued":
-                found += 1
-
+            found += 1
             item = MediaItem(
                 gif_id=info.gif_id,
                 account_id=account.id,
@@ -141,38 +138,39 @@ async def sync_account(db: Session, account: Account, *, download: bool = True) 
                 duration=info.duration,
                 width=info.width,
                 height=info.height,
-                status=status,
+                status="discovered",
                 published_at=info.published_at,
             )
             db.add(item)
             db.flush()
-            if status == "queued":
-                queued_ids.append(item.id)
+            new_ids.append(item.id)
 
         account.last_synced_at = datetime.utcnow()
         job.items_found = found
-        job.message = f"Found {found} viral items for @{account.username}"
+        job.message = f"Cataloged {found} new posts for @{account.username}"
         db.commit()
 
         write_creator_profile(db, username=account.username, account=account)
 
         downloaded = failed = 0
         if download:
-            for mid in queued_ids:
+            for mid in new_ids:
                 if await download_media_id(db, mid):
                     downloaded += 1
                 else:
                     failed += 1
-
-        write_creator_profile(db, username=account.username, account=account)
+            write_creator_profile(db, username=account.username, account=account)
 
         job.items_downloaded = downloaded
         job.items_failed = failed
         job.status = "completed"
         job.finished_at = datetime.utcnow()
-        job.message = (
-            f"@{account.username}: {found} viral, {downloaded} downloaded, {failed} failed"
-        )
+        if download:
+            job.message = (
+                f"@{account.username}: {found} cataloged, {downloaded} downloaded, {failed} failed"
+            )
+        else:
+            job.message = f"@{account.username}: {found} new posts cataloged (pick downloads in Library)"
         db.commit()
     except Exception as exc:
         logger.exception("Sync failed for %s", account.username)
@@ -185,7 +183,7 @@ async def sync_account(db: Session, account: Account, *, download: bool = True) 
     return job
 
 
-async def sync_all(db: Session, *, download: bool = True) -> SyncJob:
+async def sync_all(db: Session, *, download: bool = False) -> SyncJob:
     job = SyncJob(kind="sync", status="running", message="Syncing all accounts")
     db.add(job)
     db.commit()
@@ -203,7 +201,10 @@ async def sync_all(db: Session, *, download: bool = True) -> SyncJob:
         job.items_downloaded = total_dl
         job.items_failed = total_fail
         job.status = "completed"
-        job.message = f"Synced {len(accounts)} accounts — {total_found} viral, {total_dl} downloaded"
+        job.message = (
+            f"Synced {len(accounts)} accounts — {total_found} cataloged"
+            + (f", {total_dl} downloaded" if download else " (no auto-download)")
+        )
         job.finished_at = datetime.utcnow()
         db.commit()
     except Exception as exc:
@@ -257,7 +258,8 @@ async def download_media_id(db: Session, media_id: int) -> bool:
         return False
 
 
-async def download_by_url(db: Session, url: str) -> MediaItem:
+async def add_by_url(db: Session, url: str, *, save_file: bool = False) -> MediaItem:
+    """Catalog a gif. Only writes a file when save_file=True (explicit user download)."""
     info = await redgifs_client.get_gif(url)
     existing = db.scalar(select(MediaItem).where(MediaItem.gif_id == info.gif_id))
     if existing and existing.status == "done" and existing.local_path:
@@ -274,6 +276,8 @@ async def download_by_url(db: Session, url: str) -> MediaItem:
         item.thumbnail_url = info.thumbnail_url or item.thumbnail_url
         if account and not item.account_id:
             item.account_id = account.id
+        if item.status in ("skipped", "queued") and not save_file:
+            item.status = "discovered"
     else:
         item = MediaItem(
             gif_id=info.gif_id,
@@ -285,15 +289,17 @@ async def download_by_url(db: Session, url: str) -> MediaItem:
             duration=info.duration,
             width=info.width,
             height=info.height,
-            status="queued",
+            status="discovered",
             published_at=info.published_at,
         )
         db.add(item)
         db.commit()
         db.refresh(item)
 
-    await download_media_id(db, item.id)
-    db.refresh(item)
+    if save_file:
+        await download_media_id(db, item.id)
+        db.refresh(item)
+
     if info.username:
         write_creator_profile(
             db,
@@ -302,6 +308,11 @@ async def download_by_url(db: Session, url: str) -> MediaItem:
             display_name=info.username,
         )
     return item
+
+
+# Back-compat alias
+async def download_by_url(db: Session, url: str) -> MediaItem:
+    return await add_by_url(db, url, save_file=True)
 
 
 def list_creator_folders(db: Session) -> list[dict]:

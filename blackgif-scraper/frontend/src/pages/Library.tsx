@@ -82,7 +82,7 @@ function CreatorFolders({ q }: { q: string }) {
                 <p className="text-sm font-semibold">
                   {folder.downloaded_count}/{folder.media_count}
                 </p>
-                <p className="text-[10px] text-[var(--color-muted)]">Downloaded</p>
+                <p className="text-[10px] text-[var(--color-muted)]">Saved</p>
               </div>
               <div>
                 <p className="text-sm font-semibold">{formatDate(folder.first_post_at)}</p>
@@ -190,10 +190,9 @@ function CreatorMedia({ username }: { username: string }) {
           className="rounded-xl border border-[var(--color-border)] bg-[var(--color-panel)] px-3 py-2 text-sm"
         >
           <option value="">All statuses</option>
-          <option value="done">Downloaded</option>
-          <option value="queued">Queued</option>
+          <option value="discovered">Not saved yet</option>
+          <option value="done">Saved to disk</option>
           <option value="failed">Failed</option>
-          <option value="skipped">Skipped</option>
         </select>
         {folder?.profile_url ? (
           <a
@@ -251,7 +250,7 @@ function CreatorMedia({ username }: { username: string }) {
                 </div>
               )}
               <span className="absolute left-3 top-3 rounded-full bg-black/60 px-2 py-1 text-xs capitalize backdrop-blur">
-                {item.status}
+                {item.status === 'done' ? 'saved' : item.status === 'discovered' ? 'preview' : item.status}
               </span>
             </div>
             <div className="space-y-2 p-4">
@@ -266,7 +265,7 @@ function CreatorMedia({ username }: { username: string }) {
                     onClick={() => download(item)}
                     className="btn-primary flex flex-1 items-center justify-center gap-1 px-3 py-2 text-xs"
                   >
-                    <Download size={14} /> Download
+                    <Download size={14} /> Save to disk
                   </button>
                 ) : (
                   <a
@@ -324,7 +323,8 @@ export function Library() {
         />
       </PageHeader>
       <p className="mb-5 text-sm text-[var(--color-muted)]">
-        Creators are kept separate — open a folder for that profile’s posts, views, and first-post date.
+        Creators are kept separate. Sync catalogs posts — open a folder and use <strong>Save to disk</strong> only on
+        the ones you want.
       </p>
       <CreatorFolders q={q} />
     </div>
