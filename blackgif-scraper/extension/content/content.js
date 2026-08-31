@@ -1,9 +1,12 @@
 /**
- * Floating Track / Download bar on any RedGifs page.
- * Detects the active gif from the URL, canonical link, or on-page player.
+ * Floating Track / Download bar + robust page detection for niches/feeds.
+ * MAIN-world network hooks live in page-hook.js (world: MAIN).
  */
 
 const PANEL_ID = 'blackgif-scraper-panel'
+
+/** Latest context from DOM + network hooks */
+let liveCtx = { kind: 'other', gifId: null, url: null, username: null }
 
 function send(type, payload = {}) {
   return new Promise((resolve, reject) => {
@@ -21,15 +24,17 @@ function send(type, payload = {}) {
   })
 }
 
-function gifIdFromHref(href) {
-  if (!href) return null
-  try {
-    const u = new URL(href, location.origin)
-    const m = u.pathname.match(/\/(?:watch|ifr)\/([^/?#]+)/i)
-    return m ? decodeURIComponent(m[1]).toLowerCase() : null
-  } catch {
-    return null
-  }
+function gifIdFromText(text) {
+  if (!text) return null
+  const watch = String(text).match(/\/(?:watch|ifr)\/([A-Za-z0-9]+)/i)
+  if (watch) return watch[1].toLowerCase()
+  const cdn = String(text).match(
+    /(?:media|thumbs\d*|files)\.redgifs\.com\/([A-Za-z][A-Za-z0-9]+)(?:-mobile|-poster|-small|-large)?\.(?:mp4|webm|jpg|jpeg|png|webp|gif|m4s)/i,
+  )
+  if (cdn) return cdn[1].toLowerCase()
+  const api = String(text).match(/api\.redgifs\.com\/v2\/gifs\/([A-Za-z0-9]+)/i)
+  if (api) return api[1].toLowerCase()
+  return null
 }
 
 function usernameFromHref(href) {
@@ -37,14 +42,87 @@ function usernameFromHref(href) {
   try {
     const u = new URL(href, location.origin)
     const m = u.pathname.match(/\/users\/([^/?#]+)/i)
-    return m ? decodeURIComponent(m[1]).toLowerCase() : null
+    const name = m ? decodeURIComponent(m[1]).toLowerCase() : null
+    if (!name || ['login', 'signup', 'explore', 'niches', 'upload'].includes(name)) return null
+    return name
   } catch {
     return null
   }
 }
 
-/** Best-effort: find the gif currently shown in the player / feed. */
-function detectContext() {
+function collectMediaUrls() {
+  const urls = []
+  for (const v of document.querySelectorAll('video')) {
+    if (v.currentSrc) urls.push(v.currentSrc)
+    if (v.src) urls.push(v.src)
+    if (v.poster) urls.push(v.poster)
+    for (const s of v.querySelectorAll('source')) {
+      if (s.src) urls.push(s.src)
+    }
+  }
+  for (const img of document.querySelectorAll('img[src*="redgifs"]')) {
+    urls.push(img.currentSrc || img.src)
+  }
+  for (const el of document.querySelectorAll('[style*="redgifs"]')) {
+    const m = String(el.getAttribute('style') || '').match(/url\(["']?([^"')]+)/)
+    if (m) urls.push(m[1])
+  }
+  try {
+    for (const e of performance.getEntriesByType('resource')) {
+      if (/redgifs\.com/i.test(e.name)) urls.push(e.name)
+    }
+  } catch {
+    /* ignore */
+  }
+  return urls
+}
+
+function findPlayingVideo() {
+  const videos = [...document.querySelectorAll('video')]
+  const playing = videos.find((v) => !v.paused && v.readyState >= 2)
+  if (playing) return playing
+  let best = null
+  let bestArea = 0
+  for (const v of videos) {
+    const r = v.getBoundingClientRect()
+    const area = Math.max(0, r.width) * Math.max(0, r.height)
+    if (area > bestArea && r.bottom > 0 && r.top < innerHeight) {
+      best = v
+      bestArea = area
+    }
+  }
+  return best
+}
+
+function usernameNear(el) {
+  if (!el) return null
+  let node = el
+  for (let i = 0; i < 10 && node; i++) {
+    const a = node.querySelector?.('a[href*="/users/"]')
+    const u = usernameFromHref(a?.href)
+    if (u) return u
+    // Also check siblings / previous links often used for creator name
+    const prev = node.previousElementSibling?.querySelector?.('a[href*="/users/"]')
+    const u2 = usernameFromHref(prev?.href)
+    if (u2) return u2
+    node = node.parentElement
+  }
+  return null
+}
+
+function watchLinkNear(el) {
+  if (!el) return null
+  let node = el
+  for (let i = 0; i < 10 && node; i++) {
+    const a = node.querySelector?.('a[href*="/watch/"]')
+    const id = gifIdFromText(a?.href)
+    if (id) return id
+    node = node.parentElement
+  }
+  return null
+}
+
+function detectFromDom() {
   const path = location.pathname.replace(/\/+$/, '')
 
   const userMatch = path.match(/^\/users\/([^/?#]+)/i)
@@ -58,51 +136,56 @@ function detectContext() {
   }
 
   const watchMatch = path.match(/^\/(?:watch|ifr)\/([^/?#]+)/i)
-  if (watchMatch) {
-    const gifId = decodeURIComponent(watchMatch[1]).toLowerCase()
-    return {
-      kind: 'watch',
-      gifId,
-      url: `https://www.redgifs.com/watch/${gifId}`,
-      username: detectUploaderNearPlayer(),
-    }
-  }
-
-  // Niche / explore / home — find active player gif
-  const fromCanonical = gifIdFromHref(document.querySelector('link[rel="canonical"]')?.href)
-  const fromOg = gifIdFromHref(document.querySelector('meta[property="og:url"]')?.content)
-
-  let gifId = fromCanonical || fromOg || null
+  let gifId = watchMatch ? decodeURIComponent(watchMatch[1]).toLowerCase() : null
   let username = null
 
-  // Playing / visible video → nearest watch link
-  const video =
-    document.querySelector('video[src]') ||
-    document.querySelector('video source[src]')?.closest('video') ||
-    document.querySelector('video')
+  gifId =
+    gifId ||
+    gifIdFromText(document.querySelector('link[rel="canonical"]')?.href) ||
+    gifIdFromText(document.querySelector('meta[property="og:url"]')?.content)
 
+  const video = findPlayingVideo()
   if (video) {
-    const root =
-      video.closest('article, [class*="Gif"], [class*="gif"], [class*="Player"], [class*="player"], li, section, div') ||
-      video.parentElement
-    const watchA = root?.querySelector?.('a[href*="/watch/"]') || document.querySelector('a[href*="/watch/"]')
-    const userA = root?.querySelector?.('a[href*="/users/"]')
-    if (!gifId) gifId = gifIdFromHref(watchA?.href)
-    username = usernameFromHref(userA?.href)
-
-    // Media CDN URLs often contain the id: .../SomeGifId.mp4
-    if (!gifId && video.currentSrc) {
-      const m = video.currentSrc.match(/\/([A-Za-z0-9]+)(?:-mobile)?\.(?:mp4|webm)/i)
-      if (m) gifId = m[1].toLowerCase()
+    username = usernameNear(video)
+    gifId = gifId || watchLinkNear(video)
+    for (const u of [video.currentSrc, video.src, video.poster]) {
+      const id = gifIdFromText(u)
+      if (id) {
+        gifId = gifId || id
+        break
+      }
     }
   }
 
-  // Fallback: first watch link in the main column
   if (!gifId) {
-    const first = document.querySelector('main a[href*="/watch/"], a[href*="/watch/"]')
-    gifId = gifIdFromHref(first?.href)
+    for (const u of collectMediaUrls()) {
+      const id = gifIdFromText(u)
+      if (id) {
+        gifId = id
+        break
+      }
+    }
   }
-  if (!username) username = detectUploaderNearPlayer()
+
+  if (!username) {
+    const links = [...document.querySelectorAll('a[href*="/users/"]')]
+    let best = null
+    let bestDist = Infinity
+    const cx = innerWidth / 2
+    const cy = innerHeight / 2
+    for (const a of links) {
+      const u = usernameFromHref(a.href)
+      if (!u) continue
+      const r = a.getBoundingClientRect()
+      if (r.width === 0) continue
+      const dist = Math.hypot(r.left + r.width / 2 - cx, r.top + r.height / 2 - cy)
+      if (dist < bestDist) {
+        bestDist = dist
+        best = u
+      }
+    }
+    username = best
+  }
 
   if (gifId) {
     return {
@@ -113,19 +196,44 @@ function detectContext() {
     }
   }
 
+  if (username) {
+    return { kind: 'feed', gifId: null, url: null, username }
+  }
+
   return { kind: 'other', gifId: null, url: null, username: null }
 }
 
-function detectUploaderNearPlayer() {
-  const candidates = [
-    ...document.querySelectorAll('a[href*="/users/"]'),
-  ]
-  for (const a of candidates.slice(0, 8)) {
-    const u = usernameFromHref(a.href)
-    if (u && u !== 'login' && u !== 'signup') return u
+function mergeCtx(next) {
+  if (!next) return liveCtx
+  // Prefer newest gifId from network when DOM still stale
+  liveCtx = {
+    kind: next.kind || liveCtx.kind,
+    gifId: next.gifId || liveCtx.gifId,
+    url: next.url || (next.gifId ? `https://www.redgifs.com/watch/${next.gifId}` : liveCtx.url),
+    username: next.username || liveCtx.username,
   }
-  return null
+  return liveCtx
 }
+
+function detectContext() {
+  return mergeCtx(detectFromDom())
+}
+
+window.addEventListener('message', (event) => {
+  if (event.source !== window) return
+  const data = event.data
+  if (!data || data.source !== 'blackgif-scraper') return
+  const gifId = data.gifId ? String(data.gifId).toLowerCase() : null
+  const username = data.username ? String(data.username).toLowerCase() : null
+  if (!gifId && !username) return
+  mergeCtx({
+    kind: gifId ? 'watch' : liveCtx.kind,
+    gifId: gifId || liveCtx.gifId,
+    url: gifId ? `https://www.redgifs.com/watch/${gifId}` : liveCtx.url,
+    username: username || liveCtx.username,
+  })
+  refreshPanel()
+})
 
 function ensurePanel() {
   let panel = document.getElementById(PANEL_ID)
@@ -176,39 +284,36 @@ async function refreshPanel() {
   downloadBtn.disabled = false
   trackBtn.disabled = false
 
-  if (ctx.kind === 'user' && ctx.username) {
+  if (ctx.username) {
     trackBtn.hidden = false
-    trackBtn.textContent = 'Track account'
-    setMeta(`@${ctx.username}`)
+    trackBtn.textContent = 'Track'
     trackBtn.onclick = async () => {
       trackBtn.disabled = true
-      trackBtn.textContent = 'Tracking…'
+      trackBtn.textContent = '…'
       try {
         const acc = await send('TRACK_ACCOUNT', { username: ctx.username })
         setMeta(`Tracking @${acc.username}`, 'ok')
         trackBtn.textContent = 'Tracked ✓'
       } catch (err) {
         setMeta(err.message, 'err')
-        trackBtn.textContent = 'Track account'
+        trackBtn.textContent = 'Track'
         trackBtn.disabled = false
       }
     }
-    return
   }
 
   if (ctx.gifId && ctx.url) {
     downloadBtn.hidden = false
     downloadBtn.textContent = 'Download'
     setMeta(ctx.username ? `${ctx.gifId} · @${ctx.username}` : ctx.gifId)
-
     downloadBtn.onclick = async () => {
       downloadBtn.disabled = true
-      downloadBtn.textContent = 'Downloading…'
+      downloadBtn.textContent = '…'
       try {
         const item = await send('DOWNLOAD_URL', { url: ctx.url })
         const ok = item.status === 'done'
         setMeta(`${item.status}: ${item.gif_id}`, ok ? 'ok' : 'err')
-        downloadBtn.textContent = ok ? 'In library ✓' : 'Retry'
+        downloadBtn.textContent = ok ? 'Saved ✓' : 'Retry'
         downloadBtn.disabled = ok
       } catch (err) {
         setMeta(err.message, 'err')
@@ -216,31 +321,17 @@ async function refreshPanel() {
         downloadBtn.disabled = false
       }
     }
-
-    if (ctx.username) {
-      trackBtn.hidden = false
-      trackBtn.textContent = 'Track creator'
-      trackBtn.onclick = async () => {
-        trackBtn.disabled = true
-        trackBtn.textContent = 'Tracking…'
-        try {
-          const acc = await send('TRACK_ACCOUNT', { username: ctx.username })
-          setMeta(`Tracking @${acc.username}`, 'ok')
-          trackBtn.textContent = 'Tracked ✓'
-        } catch (err) {
-          setMeta(err.message, 'err')
-          trackBtn.textContent = 'Track creator'
-          trackBtn.disabled = false
-        }
-      }
-    }
     return
   }
 
-  setMeta('Play a gif, then Download appears')
+  if (ctx.username) {
+    setMeta(`@${ctx.username} — open watch tab or paste URL in popup`)
+    return
+  }
+
+  setMeta('Play a gif (or paste URL in popup)')
 }
 
-// Respond to popup asking "what's on this page?"
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'PAGE_CONTEXT') {
     sendResponse({ ok: true, result: detectContext() })
@@ -249,14 +340,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   return false
 })
 
-let lastHref = location.href
-let lastGif = null
+let lastKey = ''
 const tick = () => {
   const ctx = detectContext()
   const key = `${location.href}|${ctx.gifId || ''}|${ctx.username || ''}`
-  if (key !== lastGif || location.href !== lastHref) {
-    lastHref = location.href
-    lastGif = key
+  if (key !== lastKey) {
+    lastKey = key
     const panel = document.getElementById(PANEL_ID)
     if (panel) {
       panel.style.display = ''
@@ -269,5 +358,5 @@ const tick = () => {
 const mo = new MutationObserver(() => tick())
 mo.observe(document.documentElement, { childList: true, subtree: true, attributes: true })
 window.addEventListener('popstate', tick)
-setInterval(tick, 1500)
+setInterval(tick, 600)
 refreshPanel()

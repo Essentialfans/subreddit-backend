@@ -24,6 +24,13 @@
         <button id="btn-download" class="primary" disabled>Add to library</button>
         <button id="btn-track" class="secondary" disabled>Track creator</button>
       </div>
+      <label class="paste-label">
+        Or paste a watch URL / gif id
+        <div class="paste-row">
+          <input id="paste-url" type="text" placeholder="https://www.redgifs.com/watch/…" />
+          <button id="btn-paste-dl" class="primary compact">Save</button>
+        </div>
+      </label>
     </section>
 
     <section class="stats" id="stats">
@@ -55,7 +62,7 @@
     </section>
 
     <footer>
-      <span>On RedGifs you’ll also see a floating Download bar (bottom-right).</span>
+      <span>Tip: right‑click the gif → Open in new tab (watch URL), then Add to library — or paste the URL above.</span>
     </footer>
 
     <script src="popup.js" type="module"></script>
