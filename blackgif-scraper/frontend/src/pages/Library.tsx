@@ -107,8 +107,10 @@ function CreatorMedia({ username }: { username: string }) {
   const [status, setStatus] = useState('')
   const [q, setQ] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
 
   async function load() {
+    setLoading(true)
     try {
       const [media, folders] = await Promise.all([
         api.library({
@@ -123,6 +125,8 @@ function CreatorMedia({ username }: { username: string }) {
       setError(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load')
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -291,8 +295,11 @@ function CreatorMedia({ username }: { username: string }) {
           </article>
         ))}
       </div>
-      {!items.length ? (
+      {!loading && !items.length ? (
         <p className="mt-6 text-sm text-[var(--color-muted)]">No posts in this folder yet.</p>
+      ) : null}
+      {loading ? (
+        <p className="mt-6 text-sm text-[var(--color-muted)]">Loading folder…</p>
       ) : null}
     </div>
   )
