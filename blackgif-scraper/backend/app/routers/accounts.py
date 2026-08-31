@@ -122,5 +122,5 @@ def sync_one(
     acc = db.get(Account, account_id)
     if not acc:
         raise HTTPException(404, "Account not found")
-    background_tasks.add_task(_bg_sync, account_id, download)
-    return {"ok": True, "message": f"Sync started for @{acc.username}"}
+    background_tasks.add_task(_bg_sync, account_id, False)
+    return {"ok": True, "message": f"Sync started for @{acc.username} (catalog only)"}

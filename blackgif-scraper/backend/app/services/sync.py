@@ -17,6 +17,25 @@ from .redgifs import redgifs_client
 logger = logging.getLogger(__name__)
 
 
+def viral_threshold(db: Session, item: MediaItem) -> int:
+    """Min views that mark a post viral — account setting, else global default."""
+    if item.account_id:
+        acc = db.get(Account, item.account_id)
+        if acc:
+            return int(acc.min_views)
+    # Fall back to AppSetting / config default
+    from ..models import AppSetting
+
+    row = db.get(AppSetting, "default_min_views")
+    if row and row.value.isdigit():
+        return int(row.value)
+    return int(settings.default_min_views)
+
+
+def is_viral(db: Session, item: MediaItem) -> bool:
+    return (item.views or 0) >= viral_threshold(db, item)
+
+
 def _username(db: Session, item: MediaItem) -> str | None:
     if item.account_id:
         acc = db.get(Account, item.account_id)
@@ -94,6 +113,8 @@ def write_creator_profile(
 
 
 async def sync_account(db: Session, account: Account, *, download: bool = False) -> SyncJob:
+    """Catalog an account's posts. Never downloads files — download is ignored."""
+    _ = download  # kept for API back-compat; sync never writes video files
     job = SyncJob(
         kind="sync",
         status="running",
@@ -118,16 +139,21 @@ async def sync_account(db: Session, account: Account, *, download: bool = False)
         by_id = {g.gif_id: g for g in trending + newest}
 
         found = 0
-        new_ids: list[int] = []
+        viral_found = 0
         for info in by_id.values():
             existing = db.scalar(select(MediaItem).where(MediaItem.gif_id == info.gif_id))
             if existing:
                 existing.views = max(existing.views, info.views)
                 if info.thumbnail_url and not existing.thumbnail_url:
                     existing.thumbnail_url = info.thumbnail_url
+                # Refresh catalog statuses only — never touch done/failed files
+                if existing.status in ("queued", "skipped", "discovered"):
+                    existing.status = "discovered"
                 continue
 
             found += 1
+            if info.views >= account.min_views:
+                viral_found += 1
             item = MediaItem(
                 gif_id=info.gif_id,
                 account_id=account.id,
@@ -142,36 +168,20 @@ async def sync_account(db: Session, account: Account, *, download: bool = False)
                 published_at=info.published_at,
             )
             db.add(item)
-            db.flush()
-            new_ids.append(item.id)
 
         account.last_synced_at = datetime.utcnow()
         job.items_found = found
-        job.message = f"Cataloged {found} new posts for @{account.username}"
+        job.items_downloaded = 0
+        job.items_failed = 0
+        job.status = "completed"
+        job.finished_at = datetime.utcnow()
+        job.message = (
+            f"@{account.username}: {found} new posts cataloged, "
+            f"{viral_found} viral (≥{account.min_views} views) — nothing downloaded"
+        )
         db.commit()
 
         write_creator_profile(db, username=account.username, account=account)
-
-        downloaded = failed = 0
-        if download:
-            for mid in new_ids:
-                if await download_media_id(db, mid):
-                    downloaded += 1
-                else:
-                    failed += 1
-            write_creator_profile(db, username=account.username, account=account)
-
-        job.items_downloaded = downloaded
-        job.items_failed = failed
-        job.status = "completed"
-        job.finished_at = datetime.utcnow()
-        if download:
-            job.message = (
-                f"@{account.username}: {found} cataloged, {downloaded} downloaded, {failed} failed"
-            )
-        else:
-            job.message = f"@{account.username}: {found} new posts cataloged (pick downloads in Library)"
-        db.commit()
     except Exception as exc:
         logger.exception("Sync failed for %s", account.username)
         job.status = "failed"
@@ -184,26 +194,25 @@ async def sync_account(db: Session, account: Account, *, download: bool = False)
 
 
 async def sync_all(db: Session, *, download: bool = False) -> SyncJob:
+    """Catalog all enabled accounts. Never downloads files."""
+    _ = download
     job = SyncJob(kind="sync", status="running", message="Syncing all accounts")
     db.add(job)
     db.commit()
     db.refresh(job)
 
     accounts = db.scalars(select(Account).where(Account.enabled.is_(True))).all()
-    total_found = total_dl = total_fail = 0
+    total_found = 0
     try:
         for acc in accounts:
-            child = await sync_account(db, acc, download=download)
+            child = await sync_account(db, acc, download=False)
             total_found += child.items_found
-            total_dl += child.items_downloaded
-            total_fail += child.items_failed
         job.items_found = total_found
-        job.items_downloaded = total_dl
-        job.items_failed = total_fail
+        job.items_downloaded = 0
+        job.items_failed = 0
         job.status = "completed"
         job.message = (
-            f"Synced {len(accounts)} accounts — {total_found} cataloged"
-            + (f", {total_dl} downloaded" if download else " (no auto-download)")
+            f"Synced {len(accounts)} accounts — {total_found} cataloged (no auto-download)"
         )
         job.finished_at = datetime.utcnow()
         db.commit()
@@ -324,6 +333,7 @@ def list_creator_folders(db: Session) -> list[dict]:
         items = db.scalars(select(MediaItem).where(MediaItem.account_id == acc.id)).all()
         total_views = sum(i.views or 0 for i in items)
         downloaded = sum(1 for i in items if i.status == "done")
+        viral = sum(1 for i in items if (i.views or 0) >= acc.min_views)
         first_post = None
         for i in items:
             ts = i.published_at or i.discovered_at
@@ -340,12 +350,19 @@ def list_creator_folders(db: Session) -> list[dict]:
             "tracked": True,
             "media_count": len(items),
             "downloaded_count": downloaded,
+            "viral_count": viral,
             "total_views": int(total_views),
             "first_post_at": first_post,
             "last_synced_at": acc.last_synced_at,
+            "min_views": acc.min_views,
         }
 
     # Orphan / manual downloads sitting under downloads/<user>/
+    from ..models import AppSetting
+
+    row = db.get(AppSetting, "default_min_views")
+    default_min = int(row.value) if row and str(row.value).isdigit() else int(settings.default_min_views)
+
     orphans = db.scalars(select(MediaItem).where(MediaItem.account_id.is_(None))).all()
     for item in orphans:
         uname = None
@@ -362,6 +379,9 @@ def list_creator_folders(db: Session) -> list[dict]:
             folders[uname]["total_views"] += item.views or 0
             if item.status == "done":
                 folders[uname]["downloaded_count"] += 1
+            thr = folders[uname].get("min_views") or default_min
+            if (item.views or 0) >= thr:
+                folders[uname]["viral_count"] = folders[uname].get("viral_count", 0) + 1
             ts = item.published_at or item.discovered_at
             fp = folders[uname]["first_post_at"]
             if ts and (fp is None or ts < fp):
@@ -379,9 +399,11 @@ def list_creator_folders(db: Session) -> list[dict]:
             "tracked": False,
             "media_count": 1,
             "downloaded_count": 1 if item.status == "done" else 0,
+            "viral_count": 1 if (item.views or 0) >= default_min else 0,
             "total_views": int(item.views or 0),
             "first_post_at": item.published_at or item.discovered_at,
             "last_synced_at": None,
+            "min_views": default_min,
         }
 
     return sorted(folders.values(), key=lambda f: (-f["total_views"], f["username"]))

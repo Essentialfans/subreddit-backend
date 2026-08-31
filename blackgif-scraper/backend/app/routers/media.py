@@ -23,6 +23,7 @@ def _media_out(db: Session, item: MediaItem) -> MediaOut:
             username = Path(item.local_path).parent.name
         except Exception:
             username = None
+    threshold = sync_service.viral_threshold(db, item)
     return MediaOut(
         id=item.id,
         gif_id=item.gif_id,
@@ -34,6 +35,8 @@ def _media_out(db: Session, item: MediaItem) -> MediaOut:
         views=item.views,
         duration=item.duration,
         status=item.status,
+        is_viral=(item.views or 0) >= threshold,
+        viral_threshold=threshold,
         local_path=item.local_path,
         error=item.error,
         published_at=item.published_at,
@@ -52,11 +55,12 @@ def list_library(
     status: str | None = None,
     account_id: int | None = None,
     username: str | None = None,
+    viral: bool | None = None,
     q: str | None = None,
-    limit: int = Query(200, ge=1, le=500),
+    limit: int = Query(500, ge=1, le=1000),
     db: Session = Depends(get_db),
 ):
-    stmt = select(MediaItem).order_by(MediaItem.discovered_at.desc()).limit(limit)
+    stmt = select(MediaItem).order_by(MediaItem.views.desc())
     if status:
         if status == "discovered":
             stmt = stmt.where(MediaItem.status.in_(["discovered", "queued", "skipped"]))
@@ -70,7 +74,6 @@ def list_library(
         if acc:
             stmt = stmt.where(MediaItem.account_id == acc.id)
         else:
-            # Orphan folder filter by path
             stmt = stmt.where(
                 MediaItem.account_id.is_(None),
                 MediaItem.local_path.ilike(f"%/{uname}/%"),
@@ -78,7 +81,14 @@ def list_library(
     if q:
         like = f"%{q}%"
         stmt = stmt.where((MediaItem.title.ilike(like)) | (MediaItem.gif_id.ilike(like)))
-    return [_media_out(db, i) for i in db.scalars(stmt).all()]
+
+    items = list(db.scalars(stmt.limit(limit)).all())
+    out = [_media_out(db, i) for i in items]
+    if viral is True:
+        out = [m for m in out if m.is_viral]
+    elif viral is False:
+        out = [m for m in out if not m.is_viral]
+    return out
 
 
 @router.post("/download", response_model=MediaOut)
@@ -154,15 +164,15 @@ def start_sync(
             try:
                 a = s.get(Account, payload.account_id)
                 if a:
-                    asyncio.run(sync_service.sync_account(s, a, download=payload.download))
+                    asyncio.run(sync_service.sync_account(s, a, download=False))
             finally:
                 s.close()
 
         background_tasks.add_task(_one)
-        return {"ok": True, "message": f"Sync started for @{acc.username}"}
+        return {"ok": True, "message": f"Sync started for @{acc.username} (catalog only)"}
 
-    background_tasks.add_task(_bg_sync_all, payload.download)
-    return {"ok": True, "message": "Sync started for all accounts"}
+    background_tasks.add_task(_bg_sync_all, False)
+    return {"ok": True, "message": "Sync started for all accounts (catalog only)"}
 
 
 @router.get("/jobs", response_model=list[JobOut])

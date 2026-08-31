@@ -56,9 +56,10 @@ export function SettingsPage() {
           />
         </label>
         <label className="block space-y-1 text-sm">
-          <span className="text-[var(--color-muted)]">Viral highlight threshold (min views)</span>
+          <span className="text-[var(--color-muted)]">Viral threshold (min views)</span>
           <p className="text-xs text-[var(--color-muted)]">
-            Sync only catalogs posts. This marks which ones count as viral — you still pick what to save in Library.
+            Default for new accounts. Posts at or above this are marked <em>Viral</em> only — never auto-downloaded.
+            Per-account thresholds on the Accounts page override this.
           </p>
           <input
             type="number"

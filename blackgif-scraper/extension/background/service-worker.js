@@ -112,9 +112,11 @@ async function handleMessage(message) {
     case 'DOWNLOAD_URL': {
       const url = String(message.url || '').trim()
       if (!url) throw new Error('Missing URL')
+      // Only write a file when the caller explicitly asks (floating Download button)
+      const saveFile = message.saveFile === true
       const item = await api('/api/download', {
         method: 'POST',
-        body: JSON.stringify({ url, save_file: message.saveFile !== false }),
+        body: JSON.stringify({ url, save_file: saveFile }),
       })
       await refreshBadge()
       return item

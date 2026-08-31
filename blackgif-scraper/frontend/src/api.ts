@@ -56,6 +56,8 @@ export type MediaItem = {
   views: number
   duration: number | null
   status: string
+  is_viral: boolean
+  viral_threshold: number | null
   local_path: string | null
   error: string | null
   published_at: string | null
@@ -73,9 +75,11 @@ export type CreatorFolder = {
   tracked: boolean
   media_count: number
   downloaded_count: number
+  viral_count: number
   total_views: number
   first_post_at: string | null
   last_synced_at: string | null
+  min_views: number | null
 }
 
 export type Job = {
@@ -122,12 +126,20 @@ export const api = {
   deleteAccount: (id: number) => request<void>(`/api/accounts/${id}`, { method: 'DELETE' }),
   syncAccount: (id: number) =>
     request<{ ok: boolean }>(`/api/accounts/${id}/sync`, { method: 'POST' }),
-  library: (params?: { status?: string; q?: string; account_id?: number; username?: string }) => {
+  library: (params?: {
+    status?: string
+    q?: string
+    account_id?: number
+    username?: string
+    viral?: boolean
+  }) => {
     const qs = new URLSearchParams()
     if (params?.status) qs.set('status', params.status)
     if (params?.q) qs.set('q', params.q)
     if (params?.account_id) qs.set('account_id', String(params.account_id))
     if (params?.username) qs.set('username', params.username)
+    if (params?.viral === true) qs.set('viral', 'true')
+    if (params?.viral === false) qs.set('viral', 'false')
     const s = qs.toString()
     return request<MediaItem[]>(`/api/library${s ? `?${s}` : ''}`)
   },

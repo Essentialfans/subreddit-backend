@@ -79,16 +79,18 @@ function CreatorFolders({ q }: { q: string }) {
                 <p className="text-[10px] text-[var(--color-muted)]">Views</p>
               </div>
               <div>
-                <p className="text-sm font-semibold">
-                  {folder.downloaded_count}/{folder.media_count}
-                </p>
-                <p className="text-[10px] text-[var(--color-muted)]">Saved</p>
+                <p className="text-sm font-semibold">{folder.viral_count}</p>
+                <p className="text-[10px] text-[var(--color-muted)]">Viral</p>
               </div>
               <div>
-                <p className="text-sm font-semibold">{formatDate(folder.first_post_at)}</p>
-                <p className="text-[10px] text-[var(--color-muted)]">First post</p>
+                <p className="text-sm font-semibold">{folder.downloaded_count}</p>
+                <p className="text-[10px] text-[var(--color-muted)]">Saved</p>
               </div>
             </div>
+            <p className="border-t border-[var(--color-border)] px-4 py-2 text-[10px] text-[var(--color-muted)]">
+              Viral ≥ {formatViews(folder.min_views ?? 10000)} views · first post{' '}
+              {formatDate(folder.first_post_at)}
+            </p>
           </button>
         ))}
       </div>
@@ -105,6 +107,7 @@ function CreatorMedia({ username }: { username: string }) {
   const [items, setItems] = useState<MediaItem[]>([])
   const [folder, setFolder] = useState<CreatorFolder | null>(null)
   const [status, setStatus] = useState('')
+  const [viralOnly, setViralOnly] = useState(false)
   const [q, setQ] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -117,6 +120,7 @@ function CreatorMedia({ username }: { username: string }) {
           username,
           status: status || undefined,
           q: q || undefined,
+          viral: viralOnly ? true : undefined,
         }),
         api.libraryFolders(),
       ])
@@ -132,7 +136,7 @@ function CreatorMedia({ username }: { username: string }) {
 
   useEffect(() => {
     load()
-  }, [username, status])
+  }, [username, status, viralOnly])
 
   async function download(item: MediaItem) {
     await api.downloadMedia(item.id)
@@ -194,6 +198,22 @@ function CreatorMedia({ username }: { username: string }) {
           <option value="done">Saved to disk</option>
           <option value="failed">Failed</option>
         </select>
+        <button
+          type="button"
+          onClick={() => setViralOnly((v) => !v)}
+          className={`rounded-xl px-3 py-2 text-xs font-medium ${
+            viralOnly
+              ? 'bg-[rgba(167,139,250,0.2)] text-[var(--color-purple)] ring-1 ring-[var(--color-purple)]/40'
+              : 'border border-[var(--color-border)] text-[var(--color-muted)] hover:bg-white/5'
+          }`}
+          title={
+            folder?.min_views
+              ? `Show posts with ≥ ${folder.min_views} views`
+              : 'Show viral posts only'
+          }
+        >
+          Viral only
+        </button>
         {folder?.profile_url ? (
           <a
             href={folder.profile_url}
@@ -208,16 +228,18 @@ function CreatorMedia({ username }: { username: string }) {
       </PageHeader>
 
       {folder ? (
-        <div className="card mb-5 grid grid-cols-2 gap-3 p-4 sm:grid-cols-4">
+        <div className="card mb-5 grid grid-cols-2 gap-3 p-4 sm:grid-cols-5">
           <div>
             <p className="text-xs text-[var(--color-muted)]">Total views</p>
             <p className="text-lg font-semibold">{formatViews(folder.total_views)}</p>
           </div>
           <div>
-            <p className="text-xs text-[var(--color-muted)]">Downloaded</p>
-            <p className="text-lg font-semibold">
-              {folder.downloaded_count}/{folder.media_count}
-            </p>
+            <p className="text-xs text-[var(--color-muted)]">Viral (≥{formatViews(folder.min_views ?? 10000)})</p>
+            <p className="text-lg font-semibold">{folder.viral_count}</p>
+          </div>
+          <div>
+            <p className="text-xs text-[var(--color-muted)]">Saved to disk</p>
+            <p className="text-lg font-semibold">{folder.downloaded_count}</p>
           </div>
           <div>
             <p className="text-xs text-[var(--color-muted)]">First post</p>
@@ -249,9 +271,16 @@ function CreatorMedia({ username }: { username: string }) {
                   No preview
                 </div>
               )}
-              <span className="absolute left-3 top-3 rounded-full bg-black/60 px-2 py-1 text-xs capitalize backdrop-blur">
-                {item.status === 'done' ? 'saved' : item.status === 'discovered' ? 'preview' : item.status}
-              </span>
+              <div className="absolute left-3 top-3 flex flex-wrap gap-1">
+                {item.is_viral ? (
+                  <span className="rounded-full bg-[rgba(167,139,250,0.9)] px-2 py-1 text-xs font-medium backdrop-blur">
+                    Viral
+                  </span>
+                ) : null}
+                <span className="rounded-full bg-black/60 px-2 py-1 text-xs capitalize backdrop-blur">
+                  {item.status === 'done' ? 'saved' : item.status === 'discovered' ? 'preview' : item.status}
+                </span>
+              </div>
             </div>
             <div className="space-y-2 p-4">
               <h3 className="line-clamp-1 text-sm font-medium">{item.title || item.gif_id}</h3>
@@ -323,8 +352,8 @@ export function Library() {
         />
       </PageHeader>
       <p className="mb-5 text-sm text-[var(--color-muted)]">
-        Creators are kept separate. Sync catalogs posts — open a folder and use <strong>Save to disk</strong> only on
-        the ones you want.
+        Creators are kept separate. Sync only catalogs posts and marks viral ones (from your min views).
+        Nothing saves to disk until you press <strong>Save to disk</strong>.
       </p>
       <CreatorFolders q={q} />
     </div>

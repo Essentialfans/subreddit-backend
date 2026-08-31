@@ -48,6 +48,8 @@ class MediaOut(BaseModel):
     views: int
     duration: float | None
     status: str
+    is_viral: bool = False
+    viral_threshold: int | None = None
     local_path: str | None
     error: str | None
     published_at: datetime | None
@@ -69,9 +71,11 @@ class CreatorFolderOut(BaseModel):
     tracked: bool = False
     media_count: int = 0
     downloaded_count: int = 0
+    viral_count: int = 0
     total_views: int = 0
     first_post_at: datetime | None = None
     last_synced_at: datetime | None = None
+    min_views: int | None = None
 
 
 class DownloadUrlRequest(BaseModel):
