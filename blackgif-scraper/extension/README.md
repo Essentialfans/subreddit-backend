@@ -4,10 +4,9 @@ Chrome/Edge (Manifest V3) companion for the local BlackGif Scraper API.
 
 ## Features
 
-- **Popup** — Add to library / Track creator on the active RedGifs tab, paste watch URL fallback, Sync all, settings
-- **Niches / feeds** — detects the playing gif via CDN + API hooks (no need for `/watch/` in the URL)
-- **Profile pages** — floating **Track** + popup **Track account**
-- **Watch pages** — floating **Download** → saves clip into your library
+- **Popup** — **Download this gif** (whatever is on screen), Add to library, Track creator, Sync all, settings
+- **Niches / feeds / profiles** — detects the playing gif via CDN + API hooks (no `/watch/` URL required)
+- **Floating bar** — one-click **Download** of the current video + **Track**
 - Badge shows approximate library activity
 
 ## Install (Chrome / Edge)
@@ -25,9 +24,9 @@ Chrome/Edge (Manifest V3) companion for the local BlackGif Scraper API.
 
 If you see Offline, the local API at `http://127.0.0.1:8000` is not running. Run the install script above, then Refresh.
 
-### Niches feed tip
+### Tip
 
-Play a gif, wait ~1s, reopen the popup. **Add to library** enables when the gif id is detected; **Track creator** enables when the username is visible. You can also paste a watch URL / gif id into the popup and hit **Save**.
+Play the gif you want, wait ~1s if needed, then hit **Download this gif** (popup) or **Download** (floating bar). No paste step.
 
 ## Settings
 

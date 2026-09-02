@@ -20,8 +20,6 @@ const els = {
   saveFile: document.getElementById('btn-save-file'),
   add: document.getElementById('btn-add'),
   track: document.getElementById('btn-track'),
-  pasteUrl: document.getElementById('paste-url'),
-  pasteDl: document.getElementById('btn-paste-dl'),
   accounts: document.getElementById('stat-accounts'),
   downloaded: document.getElementById('stat-downloaded'),
   queued: document.getElementById('stat-queued'),
@@ -68,37 +66,15 @@ function escapeHtml(s) {
     .replace(/"/g, '&quot;')
 }
 
-function parseWatchInput(raw) {
-  const text = String(raw || '').trim()
-  if (!text) return null
-  const watch = text.match(/\/(?:watch|ifr)\/([A-Za-z0-9]+)/i)
-  if (watch) {
-    const gifId = watch[1].toLowerCase()
-    return { gifId, url: `https://www.redgifs.com/watch/${gifId}` }
-  }
-  const cdn = text.match(
-    /(?:media|thumbs\d*|files)\.redgifs\.com\/([A-Za-z][A-Za-z0-9]+)(?:-mobile|-poster|-small|-large)?\./i,
-  )
-  if (cdn) {
-    const gifId = cdn[1].toLowerCase()
-    return { gifId, url: `https://www.redgifs.com/watch/${gifId}` }
-  }
-  if (/^[A-Za-z0-9]{4,80}$/.test(text)) {
-    const gifId = text.toLowerCase()
-    return { gifId, url: `https://www.redgifs.com/watch/${gifId}` }
-  }
-  return null
-}
-
 function resetActionButtons() {
   els.saveFile.disabled = true
   els.add.disabled = true
   els.track.disabled = true
-  els.saveFile.textContent = 'Download'
+  els.saveFile.textContent = 'Download this gif'
   els.add.textContent = 'Add to library'
   els.track.textContent = 'Track creator'
   if (els.downloadHint) {
-    els.downloadHint.textContent = 'Saves the current gif to disk'
+    els.downloadHint.textContent = 'One click — saves whatever you’re watching'
   }
 }
 
@@ -115,9 +91,9 @@ function markDownloadedUi(username, gifId) {
 
 function enableGifActions(ctx) {
   els.pageLabel.textContent = ctx.username
-    ? `Gif ${ctx.gifId} · @${ctx.username}`
-    : `Gif ${ctx.gifId}`
-  if (els.downloadHint) els.downloadHint.textContent = 'Ready — click Download to save the file'
+    ? `Ready · @${ctx.username}`
+    : `Ready · ${ctx.gifId}`
+  if (els.downloadHint) els.downloadHint.textContent = 'Click Download this gif to save the file'
   if (ctx.username) {
     els.track.disabled = false
     els.track.textContent = 'Track creator'
@@ -128,14 +104,14 @@ function enableGifActions(ctx) {
         markDownloadedUi(ctx.username, ctx.gifId)
       } else {
         els.saveFile.disabled = false
-        els.saveFile.textContent = 'Download'
+        els.saveFile.textContent = 'Download this gif'
         els.add.disabled = false
         els.add.textContent = 'Add to library'
       }
     })
     .catch(() => {
       els.saveFile.disabled = false
-      els.saveFile.textContent = 'Download'
+      els.saveFile.textContent = 'Download this gif'
       els.add.disabled = false
       els.add.textContent = 'Add to library'
     })
@@ -146,7 +122,13 @@ function applyPageContext(ctx) {
   resetActionButtons()
 
   if (!pageCtx) {
-    els.pageLabel.textContent = 'Open RedGifs to download or track'
+    els.pageLabel.textContent = 'Open RedGifs and play a gif'
+    return
+  }
+
+  // Gif on screen (watch / niches / profile player) → one-click download
+  if (pageCtx.gifId && pageCtx.url) {
+    enableGifActions(pageCtx)
     return
   }
 
@@ -154,27 +136,25 @@ function applyPageContext(ctx) {
     els.pageLabel.textContent = `Profile @${pageCtx.username}`
     els.track.disabled = false
     els.track.textContent = 'Track account'
-    return
-  }
-
-  if (pageCtx.gifId && pageCtx.url) {
-    enableGifActions(pageCtx)
-    return
-  }
-
-  if (pageCtx.username) {
-    els.pageLabel.textContent = `@${pageCtx.username} playing — paste watch URL below to Download`
-    els.track.disabled = false
-    els.track.textContent = 'Track creator'
     if (els.downloadHint) {
-      els.downloadHint.textContent = 'Gif id not detected yet — paste URL below, then Download'
+      els.downloadHint.textContent = 'Play a gif on this profile, then Download this gif'
     }
     return
   }
 
-  els.pageLabel.textContent = 'Play a gif, wait a second, reopen — or paste watch URL'
+  if (pageCtx.username) {
+    els.pageLabel.textContent = `@${pageCtx.username}`
+    els.track.disabled = false
+    els.track.textContent = 'Track creator'
+    if (els.downloadHint) {
+      els.downloadHint.textContent = 'Play the gif fully — Download unlocks when detected'
+    }
+    return
+  }
+
+  els.pageLabel.textContent = 'Play a gif to unlock Download'
   if (els.downloadHint) {
-    els.downloadHint.textContent = 'Paste a watch URL below to download anytime'
+    els.downloadHint.textContent = 'No paste step — waits for the video on screen'
   }
 }
 
@@ -204,17 +184,16 @@ async function refreshStats() {
     els.accounts.textContent = '—'
     els.downloaded.textContent = '—'
     els.queued.textContent = '—'
-    // Don't rethrow — keeps Chrome from listing this as an extension crash
   }
 }
 
-/** Fallback DOM scan when content script message fails */
+/** Fallback DOM scan when content script message fails — never skip profile pages */
 function fallbackDetectFn() {
   const path = location.pathname.replace(/\/+$/, '')
-  const user = path.match(/^\/users\/([^/?#]+)/i)
-  if (user) {
-    return { kind: 'user', username: decodeURIComponent(user[1]).toLowerCase(), gifId: null, url: null }
-  }
+  const userMatch = path.match(/^\/users\/([^/?#]+)/i)
+  const profileUsername = userMatch
+    ? decodeURIComponent(userMatch[1]).toLowerCase()
+    : null
 
   const idFrom = (text) => {
     if (!text) return null
@@ -241,7 +220,11 @@ function fallbackDetectFn() {
     }
   }
 
+  const hookedGif = document.documentElement.getAttribute('data-bg-gif-id')
+  const hookedUser = document.documentElement.getAttribute('data-bg-username')
+
   let gifId =
+    (hookedGif ? hookedGif.toLowerCase() : null) ||
     idFrom(path.match(/^\/(?:watch|ifr)\/([^/?#]+)/i)?.[0]) ||
     idFrom(document.querySelector('link[rel="canonical"]')?.href) ||
     idFrom(document.querySelector('meta[property="og:url"]')?.content) ||
@@ -256,18 +239,27 @@ function fallbackDetectFn() {
       return r.width > 120 && r.height > 120 && r.top < innerHeight && r.bottom > 0
     }) ||
     videos[0]
+
+  let username = hookedUser || profileUsername || null
+
   if (playing) {
     for (const u of [playing.currentSrc, playing.src, playing.poster]) {
       gifId = gifId || idFrom(u)
     }
-    // Walk up for watch links near the player
     let node = playing
     for (let i = 0; i < 10 && node && !gifId; i++) {
       const a = node.querySelector?.('a[href*="/watch/"]')
       gifId = gifId || idFrom(a?.href)
       node = node.parentElement
     }
+    node = playing
+    for (let i = 0; i < 12 && node && !username; i++) {
+      const a = node.querySelector?.('a[href*="/users/"]')
+      username = userFromHref(a?.href) || username
+      node = node.parentElement
+    }
   }
+
   if (!gifId) {
     for (const v of videos) {
       for (const u of [v.currentSrc, v.src, v.poster]) {
@@ -277,7 +269,7 @@ function fallbackDetectFn() {
       if (gifId) break
     }
   }
-  // Prefer newest media CDN hits (playing feed item)
+
   try {
     const resources = performance.getEntriesByType('resource').slice(-80).reverse()
     for (const e of resources) {
@@ -288,15 +280,6 @@ function fallbackDetectFn() {
     /* ignore */
   }
 
-  let username = null
-  if (playing) {
-    let node = playing
-    for (let i = 0; i < 12 && node && !username; i++) {
-      const a = node.querySelector?.('a[href*="/users/"]')
-      username = userFromHref(a?.href)
-      node = node.parentElement
-    }
-  }
   if (!username) {
     const links = [...document.querySelectorAll('a[href*="/users/"]')]
     let best = null
@@ -314,11 +297,14 @@ function fallbackDetectFn() {
         best = u
       }
     }
-    username = best
+    username = best || profileUsername
   }
 
   if (gifId) {
     return { kind: 'watch', gifId, url: `https://www.redgifs.com/watch/${gifId}`, username }
+  }
+  if (profileUsername) {
+    return { kind: 'user', username: profileUsername, gifId: null, url: null }
   }
   if (username) return { kind: 'feed', gifId: null, url: null, username }
   return { kind: 'other', gifId: null, url: null, username: null }
@@ -341,7 +327,6 @@ async function loadPageContext() {
     const response = await chrome.tabs.sendMessage(tab.id, { type: 'PAGE_CONTEXT' })
     if (!response?.ok) throw new Error('No page context')
     applyPageContext(response.result)
-    // If content script has username but no gif yet, still try a fresh DOM scan
     if (response.result?.gifId) return
   } catch {
     // Content script may not be injected yet
@@ -352,7 +337,6 @@ async function loadPageContext() {
       target: { tabId: tab.id },
       func: fallbackDetectFn,
     })
-    // Prefer richer of the two contexts
     if (result?.gifId || result?.username) {
       applyPageContext({
         ...(pageCtx || {}),
@@ -381,13 +365,13 @@ els.saveFile.addEventListener('click', async () => {
       markDownloadedUi(pageCtx.username, item.gif_id)
     } else {
       toast(item.status || 'Download failed')
-      els.saveFile.textContent = 'Download'
+      els.saveFile.textContent = 'Download this gif'
       els.saveFile.disabled = false
     }
     await refreshStats()
   } catch (err) {
     toast(err.message)
-    els.saveFile.textContent = 'Download'
+    els.saveFile.textContent = 'Download this gif'
     els.saveFile.disabled = false
   }
 })
@@ -405,7 +389,7 @@ els.add.addEventListener('click', async () => {
       toast(`Added ${item.gif_id} (preview only)`)
       els.add.textContent = 'In library ✓'
       els.saveFile.disabled = false
-      els.saveFile.textContent = 'Download'
+      els.saveFile.textContent = 'Download this gif'
     }
     await refreshStats()
   } catch (err) {
@@ -429,35 +413,6 @@ els.track.addEventListener('click', async () => {
     toast(err.message)
     els.track.textContent = 'Track creator'
     els.track.disabled = false
-  }
-})
-
-els.pasteDl.addEventListener('click', async () => {
-  const parsed = parseWatchInput(els.pasteUrl.value)
-  if (!parsed) {
-    toast('Paste a watch URL or gif id')
-    return
-  }
-  els.pasteDl.disabled = true
-  els.pasteDl.textContent = '…'
-  try {
-    const item = await send('DOWNLOAD_URL', { url: parsed.url, saveFile: true })
-    toast(item.status === 'done' ? `Downloaded ${item.gif_id}` : item.status)
-    pageCtx = { ...(pageCtx || {}), kind: 'watch', ...parsed }
-    applyPageContext(pageCtx)
-    await refreshStats()
-  } catch (err) {
-    toast(err.message)
-  } finally {
-    els.pasteDl.disabled = false
-    els.pasteDl.textContent = 'Download'
-  }
-})
-
-els.pasteUrl.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') {
-    e.preventDefault()
-    els.pasteDl.click()
   }
 })
 

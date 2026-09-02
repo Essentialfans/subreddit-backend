@@ -130,18 +130,13 @@ function detectFromDom() {
   const hookedUser = document.documentElement.getAttribute('data-bg-username')
 
   const userMatch = path.match(/^\/users\/([^/?#]+)/i)
-  if (userMatch) {
-    return {
-      kind: 'user',
-      username: decodeURIComponent(userMatch[1]).toLowerCase(),
-      gifId: null,
-      url: null,
-    }
-  }
+  const profileUsername = userMatch
+    ? decodeURIComponent(userMatch[1]).toLowerCase()
+    : null
 
   const watchMatch = path.match(/^\/(?:watch|ifr)\/([^/?#]+)/i)
   let gifId = watchMatch ? decodeURIComponent(watchMatch[1]).toLowerCase() : null
-  let username = hookedUser || null
+  let username = hookedUser || profileUsername || null
 
   gifId =
     gifId ||
@@ -153,7 +148,7 @@ function detectFromDom() {
 
   const video = findPlayingVideo()
   if (video) {
-    username = username || usernameNear(video)
+    username = username || usernameNear(video) || profileUsername
     gifId = gifId || watchLinkNear(video)
     for (const u of [video.currentSrc, video.src, video.poster]) {
       const id = gifIdFromText(u)
@@ -178,7 +173,7 @@ function detectFromDom() {
   if (!gifId && video) {
     let node = video.parentElement
     for (let i = 0; i < 6 && node && !gifId; i++) {
-      gifId = gifIdFromText(node.innerHTML?.slice(0, 5000))
+      gifId = gifIdFromText(node.innerHTML?.slice(0, 8000))
       node = node.parentElement
     }
   }
@@ -200,15 +195,26 @@ function detectFromDom() {
         best = u
       }
     }
-    username = best
+    username = best || profileUsername
   }
 
+  // Playing gif on a profile / niches / watch page → one-click download
   if (gifId) {
     return {
       kind: 'watch',
       gifId,
       url: `https://www.redgifs.com/watch/${gifId}`,
       username,
+    }
+  }
+
+  // Profile with no gif detected yet
+  if (profileUsername) {
+    return {
+      kind: 'user',
+      username: profileUsername,
+      gifId: null,
+      url: null,
     }
   }
 
@@ -357,31 +363,34 @@ async function refreshPanel() {
     return
   }
 
-  // No gif id yet — still show Download; click asks for URL
+  // No gif id yet — keep Download visible; click re-detects current player (no paste)
   downloadBtn.textContent = 'Download'
+  downloadBtn.disabled = false
   downloadBtn.onclick = async () => {
-    const pasted = window.prompt(
-      'Paste a RedGifs watch URL or gif id to download:',
-      'https://www.redgifs.com/watch/',
-    )
-    if (!pasted) return
-    const watch = pasted.match(/\/(?:watch|ifr)\/([A-Za-z0-9]+)/i)
-    const plain = /^[A-Za-z0-9]{4,80}$/.test(pasted.trim()) ? pasted.trim() : null
-    const gifId = (watch?.[1] || plain || '').toLowerCase()
-    if (!gifId) {
-      setMeta('Need a watch URL or gif id', 'err')
+    downloadBtn.disabled = true
+    downloadBtn.textContent = '…'
+    const fresh = detectContext()
+    if (fresh.gifId && fresh.url) {
+      wireDownload(fresh.url, fresh.gifId)
+      downloadBtn.click()
       return
     }
-    wireDownload(`https://www.redgifs.com/watch/${gifId}`, gifId)
-    downloadBtn.click()
+    downloadBtn.textContent = 'Download'
+    downloadBtn.disabled = false
+    setMeta(
+      ctx.username
+        ? `@${ctx.username} — play the gif, then Download`
+        : 'Play the gif on screen, then Download',
+      'err',
+    )
   }
 
   if (ctx.username) {
-    setMeta(`@${ctx.username} — tap Download (or wait for detect)`)
+    setMeta(`@${ctx.username} — play gif, then Download`)
     return
   }
 
-  setMeta('Tap Download — or play gif to auto-detect')
+  setMeta('Play a gif — Download saves what’s on screen')
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
