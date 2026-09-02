@@ -9,19 +9,43 @@ const PANEL_ID = 'blackgif-scraper-panel'
 let liveCtx = { kind: 'other', gifId: null, url: null, username: null }
 let lastPathname = location.pathname
 
+function friendlyRuntimeError(err) {
+  const raw = String(err?.message || err || '')
+  if (/extension context invalidated|receiving end does not exist|message port closed/i.test(raw)) {
+    return 'Extension was reloaded — refresh this RedGifs tab (Cmd+Shift+R), then Download again'
+  }
+  return raw || 'Request failed'
+}
+
+function extensionAlive() {
+  try {
+    return Boolean(chrome?.runtime?.id)
+  } catch {
+    return false
+  }
+}
+
 function send(type, payload = {}) {
   return new Promise((resolve, reject) => {
-    chrome.runtime.sendMessage({ type, ...payload }, (response) => {
-      if (chrome.runtime.lastError) {
-        reject(new Error(chrome.runtime.lastError.message))
-        return
-      }
-      if (!response?.ok) {
-        reject(new Error(response?.error || 'Request failed'))
-        return
-      }
-      resolve(response.result)
-    })
+    if (!extensionAlive()) {
+      reject(new Error('Extension context invalidated.'))
+      return
+    }
+    try {
+      chrome.runtime.sendMessage({ type, ...payload }, (response) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message))
+          return
+        }
+        if (!response?.ok) {
+          reject(new Error(response?.error || 'Request failed'))
+          return
+        }
+        resolve(response.result)
+      })
+    } catch (err) {
+      reject(err instanceof Error ? err : new Error(String(err)))
+    }
   })
 }
 
@@ -318,9 +342,30 @@ function setMeta(text, tone = 'neutral') {
 /** Avoid racing LOOKUP for an old gif after context switches */
 let panelLookupToken = 0
 
+function showDeadContext(panel) {
+  const downloadBtn = panel.querySelector('#bg-download')
+  const trackBtn = panel.querySelector('#bg-track')
+  setMeta('Extension reloaded — refresh this tab, then Download', 'err')
+  if (downloadBtn) {
+    downloadBtn.hidden = false
+    downloadBtn.disabled = false
+    downloadBtn.textContent = 'Refresh page'
+    downloadBtn.onclick = () => location.reload()
+  }
+  if (trackBtn) {
+    trackBtn.hidden = true
+    trackBtn.onclick = null
+  }
+}
+
 async function refreshPanel() {
   const panel = ensurePanel()
   if (panel.dataset.hidden === '1') return
+
+  if (!extensionAlive()) {
+    showDeadContext(panel)
+    return
+  }
 
   const ctx = detectContext()
   const downloadBtn = panel.querySelector('#bg-download')
@@ -347,7 +392,12 @@ async function refreshPanel() {
         trackBtn.textContent = 'Tracked ✓'
       } catch (err) {
         if (token !== panelLookupToken) return
-        setMeta(err.message, 'err')
+        const msg = friendlyRuntimeError(err)
+        setMeta(msg, 'err')
+        if (/refresh this/i.test(msg)) {
+          showDeadContext(panel)
+          return
+        }
         trackBtn.textContent = 'Track'
         trackBtn.disabled = false
       }
@@ -370,7 +420,12 @@ async function refreshPanel() {
         downloadBtn.disabled = ok
       } catch (err) {
         if (token !== panelLookupToken) return
-        setMeta(err.message, 'err')
+        const msg = friendlyRuntimeError(err)
+        setMeta(msg, 'err')
+        if (/refresh this/i.test(msg)) {
+          showDeadContext(panel)
+          return
+        }
         downloadBtn.textContent = 'Download'
         downloadBtn.disabled = false
       }
@@ -393,13 +448,23 @@ async function refreshPanel() {
         }
         wireDownload(ctx.url, ctx.gifId)
       })
-      .catch(() => wireDownload(ctx.url, ctx.gifId))
+      .catch((err) => {
+        if (/extension context invalidated|receiving end does not exist/i.test(String(err?.message || err))) {
+          showDeadContext(panel)
+          return
+        }
+        wireDownload(ctx.url, ctx.gifId)
+      })
     return
   }
 
   downloadBtn.textContent = 'Download'
   downloadBtn.disabled = false
   downloadBtn.onclick = async () => {
+    if (!extensionAlive()) {
+      showDeadContext(panel)
+      return
+    }
     downloadBtn.disabled = true
     downloadBtn.textContent = '…'
     const fresh = detectContext()
