@@ -2,8 +2,8 @@
  * MAIN-world hook (manifest world: MAIN). Captures gif IDs from RedGifs
  * fetch/XHR/media even when the address bar stays on /niches/...
  *
- * Only emits the *current* playing / freshly fetched gif — never replays
- * the whole performance timeline (that stuck previous creators).
+ * Only binds the *currently playing* video — never trust a stale ?gif=
+ * query or background API prefetch of other clips.
  */
 (() => {
   if (window.__bgBlackGifHook) return
@@ -13,8 +13,11 @@
   const catalog = new Map()
   /** @type {Set<string>} */
   const seenResources = new Set()
-  let lastPath = location.pathname
+  /** @type {{ url: string, id: string, t: number }[]} */
+  const recentMedia = []
+  let lastPath = location.pathname + location.search
   let activeGifId = null
+  let playGeneration = 0
 
   const profileUserFromPath = () => {
     const m = location.pathname.match(/^\/users\/([^/?#]+)/i)
@@ -25,31 +28,28 @@
     try {
       document.documentElement.removeAttribute('data-bg-gif-id')
       document.documentElement.removeAttribute('data-bg-username')
+      document.documentElement.removeAttribute('data-bg-gif-source')
     } catch (_) {
       /* ignore */
     }
   }
 
-  const emit = (payload, { force = false } = {}) => {
+  const emit = (payload, { force = false, source = 'hook' } = {}) => {
     if (!payload?.gifId && !payload?.username) return
     const gifId = payload.gifId ? String(payload.gifId).toLowerCase() : null
     const profileUser = profileUserFromPath()
     let username = payload.username ? String(payload.username).toLowerCase() : null
-    // On a profile page, never keep another creator's name
     if (profileUser) username = profileUser
 
     if (gifId) {
-      if (!force && activeGifId && activeGifId !== gifId) {
-        // Ignore background prefetch of other gifs while one is active,
-        // unless this emit is from the playing video (force).
-        return
-      }
+      if (!force && activeGifId && activeGifId !== gifId) return
       activeGifId = gifId
     }
 
     try {
       if (gifId) {
         document.documentElement.setAttribute('data-bg-gif-id', gifId)
+        document.documentElement.setAttribute('data-bg-gif-source', source)
       }
       if (username) {
         document.documentElement.setAttribute('data-bg-username', username)
@@ -57,13 +57,16 @@
     } catch (_) {
       /* ignore */
     }
-    window.postMessage({ source: 'blackgif-scraper', gifId, username, t: Date.now() }, '*')
+    window.postMessage(
+      { source: 'blackgif-scraper', gifId, username, gifSource: source, t: Date.now() },
+      '*',
+    )
   }
 
   const resetForNavigation = () => {
-    const path = location.pathname
-    if (path === lastPath) return
-    lastPath = path
+    const key = location.pathname + location.search
+    if (key === lastPath) return
+    lastPath = key
     activeGifId = null
     clearAttrs()
     const profileUser = profileUserFromPath()
@@ -88,6 +91,7 @@
   const idFromUrl = (url) => {
     if (!url) return null
     const s = String(url)
+    if (s.startsWith('blob:')) return null
     let m = s.match(/\/(?:watch|ifr)\/([A-Za-z0-9]+)/i)
     if (m) return m[1].toLowerCase()
     m = s.match(
@@ -115,19 +119,30 @@
     })
   }
 
+  const playingVideo = () => {
+    const videos = [...document.querySelectorAll('video')]
+    return videos.find((v) => !v.paused && v.readyState >= 2) || null
+  }
+
   const handleJson = (data) => {
     try {
       if (!data) return
       if (data.gif) {
         rememberGif(data.gif)
-        // Single-gif API responses are authoritative for the current view
         const id = String(data.gif.id).toLowerCase()
         const username = (data.gif.userName || data.gif.username || '').toLowerCase() || null
-        emit({ gifId: id, username }, { force: true })
+        // Do NOT force-bind feed/detail prefetch — only /watch/ pages or matching player
+        const onWatch = /^\/(?:watch|ifr)\//i.test(location.pathname)
+        const video = playingVideo()
+        const fromVideo = video
+          ? idFromUrl(video.currentSrc || video.src || video.poster)
+          : null
+        if (onWatch || (fromVideo && fromVideo === id)) {
+          emit({ gifId: id, username }, { force: true, source: 'api' })
+        }
       }
       if (Array.isArray(data.gifs)) {
         for (const g of data.gifs) rememberGif(g)
-        // Feed payloads: do not emit every gif — wait for play
       }
     } catch (_) {
       /* ignore */
@@ -135,19 +150,23 @@
   }
 
   const noteNewResource = (url) => {
-    if (!url || seenResources.has(url)) return
+    if (!url) return
+    const id = idFromUrl(url)
+    if (id) {
+      recentMedia.push({ url: String(url), id, t: Date.now() })
+      if (recentMedia.length > 80) recentMedia.splice(0, recentMedia.length - 80)
+    }
+    if (seenResources.has(url)) return
     seenResources.add(url)
-    // Cap set size
     if (seenResources.size > 400) {
       const first = seenResources.values().next().value
       seenResources.delete(first)
     }
-    // Only update active id from resources when nothing is active yet
-    const id = idFromUrl(url)
     if (!id) return
     const entry = catalog.get(id)
-    if (!activeGifId) {
-      emit({ gifId: id, username: entry?.username || null })
+    // Never steal active player binding from background CDN prefetch
+    if (!activeGifId && !playingVideo()) {
+      emit({ gifId: id, username: entry?.username || null }, { source: 'cdn' })
     }
   }
 
@@ -198,23 +217,63 @@
     return sendX.apply(this, args)
   }
 
+  const idNearVideo = (video) => {
+    if (!video) return null
+    let node = video
+    for (let i = 0; i < 8 && node; i++) {
+      const a = node.querySelector?.('a[href*="/watch/"]')
+      const id = idFromUrl(a?.href)
+      if (id) return id
+      const html = node.getAttribute?.('data-id') || node.getAttribute?.('data-gif-id')
+      if (html && /^[A-Za-z0-9]{4,80}$/.test(html)) return html.toLowerCase()
+      node = node.parentElement
+    }
+    return null
+  }
+
   const matchPlaying = (video) => {
     if (!video) return
-    resetForNavigation()
+    // New play always wins over stale ?gif= / previous clip
+    activeGifId = null
+    const gen = ++playGeneration
     const candidates = [video.currentSrc, video.src, video.poster].filter(Boolean)
+
+    const bind = (id, username, source) => {
+      if (gen !== playGeneration) return
+      const entry = catalog.get(id)
+      emit(
+        { gifId: id, username: username || entry?.username || profileUserFromPath() },
+        { force: true, source },
+      )
+    }
+
     for (const u of candidates) {
       const id = idFromUrl(u)
       if (id) {
-        const entry = catalog.get(id)
-        emit({ gifId: id, username: entry?.username || profileUserFromPath() }, { force: true })
+        bind(id, null, 'video')
         return
       }
     }
-    // Match catalog media URLs against currentSrc (blob pages still had CDN fetch)
+
+    const near = idNearVideo(video)
+    if (near) {
+      bind(near, null, 'dom')
+      return
+    }
+
+    // Blob player: use newest CDN hits from the last couple seconds
+    const now = Date.now()
+    const fresh = [...recentMedia].reverse().filter((e) => now - e.t < 8000)
+    for (const e of fresh) {
+      bind(e.id, null, 'recent-cdn')
+      return
+    }
+
+    // Catalog URL overlap (weak)
     for (const [id, entry] of catalog.entries()) {
       for (const u of entry.urls) {
-        if (candidates.some((c) => c && u && (c.includes(id) || u.includes(c.slice(-40))))) {
-          emit({ gifId: id, username: entry.username || profileUserFromPath() }, { force: true })
+        if (candidates.some((c) => c && u && (c.includes(id) || u.includes(String(c).slice(-40))))) {
+          bind(id, entry.username, 'catalog')
           return
         }
       }
@@ -236,7 +295,7 @@
     (e) => {
       const v = e.target
       if (!v || v.tagName !== 'VIDEO') return
-      matchPlaying(v)
+      if (!v.paused) matchPlaying(v)
     },
     true,
   )
@@ -252,10 +311,11 @@
     /* ignore */
   }
 
-  // Seed seen set with existing resources so we don't treat them as "new" later
   try {
     for (const e of performance.getEntriesByType('resource')) {
       seenResources.add(e.name)
+      const id = idFromUrl(e.name)
+      if (id) recentMedia.push({ url: e.name, id, t: Date.now() - 60000 })
     }
   } catch (_) {
     /* ignore */
@@ -267,9 +327,8 @@
     for (const v of videos) {
       if (!v.paused && v.readyState >= 2) matchPlaying(v)
     }
-  }, 800)
+  }, 700)
 
-  // History / SPA navigation
   const wrapHistory = (method) => {
     const orig = history[method]
     return function (...args) {

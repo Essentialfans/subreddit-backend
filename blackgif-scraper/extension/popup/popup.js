@@ -84,11 +84,11 @@ function markDownloadedUi(username, gifId) {
   els.add.disabled = true
   els.add.textContent = 'Downloaded'
   els.pageLabel.textContent = username
-    ? `Downloaded · @${username}`
+    ? `Downloaded · ${gifId} · @${username}`
     : `Downloaded · ${gifId}`
   if (els.downloadHint) {
     els.downloadHint.textContent = username
-      ? `On disk in Library → Downloaded (folder @${username})`
+      ? `On disk under @${username} — Library → Downloaded`
       : 'Already on disk — open Library → Downloaded'
   }
 }
