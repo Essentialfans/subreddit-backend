@@ -126,11 +126,48 @@ function MediaGrid({
   )
 }
 
+function dayKeyFromDate(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+function dayKeyFromIso(iso: string | null): string | null {
+  if (!iso) return null
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return null
+  return dayKeyFromDate(d)
+}
+
+function formatDayLabel(key: string): string {
+  const [y, m, d] = key.split('-').map(Number)
+  const date = new Date(y, m - 1, d)
+  const today = dayKeyFromDate(new Date())
+  const yestDate = new Date()
+  yestDate.setDate(yestDate.getDate() - 1)
+  const yest = dayKeyFromDate(yestDate)
+  if (key === today) return 'Today'
+  if (key === yest) return 'Yesterday'
+  return date.toLocaleDateString(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    year: date.getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined,
+  })
+}
+
+function startOfLocalDay(d = new Date()) {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate())
+}
+
 function DownloadedMedia() {
   const [items, setItems] = useState<MediaItem[]>([])
   const [q, setQ] = useState('')
   const [viralOnly, setViralOnly] = useState(false)
   const [creatorFilter, setCreatorFilter] = useState('')
+  /** '' = all, 'today' | 'yesterday' | '7d' | YYYY-MM-DD */
+  const [dayFilter, setDayFilter] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -163,11 +200,40 @@ function DownloadedMedia() {
     return [...set].sort()
   }, [items])
 
+  const downloadDays = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const item of items) {
+      const key = dayKeyFromIso(item.downloaded_at || item.discovered_at)
+      if (!key) continue
+      counts.set(key, (counts.get(key) || 0) + 1)
+    }
+    return [...counts.entries()]
+      .sort((a, b) => b[0].localeCompare(a[0]))
+      .map(([key, count]) => ({ key, count }))
+  }, [items])
+
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase()
+    const todayStart = startOfLocalDay()
+    const yesterdayStart = startOfLocalDay(new Date(Date.now() - 86400000))
+    const weekStart = startOfLocalDay(new Date(Date.now() - 6 * 86400000))
+
     return items.filter((item) => {
       const creator = usernameFromItem(item)
       if (creatorFilter && creator !== creatorFilter) return false
+
+      const when = item.downloaded_at || item.discovered_at
+      const whenDate = when ? new Date(when) : null
+      if (dayFilter === 'today') {
+        if (!whenDate || whenDate < todayStart) return false
+      } else if (dayFilter === 'yesterday') {
+        if (!whenDate || whenDate < yesterdayStart || whenDate >= todayStart) return false
+      } else if (dayFilter === '7d') {
+        if (!whenDate || whenDate < weekStart) return false
+      } else if (dayFilter) {
+        if (dayKeyFromIso(when) !== dayFilter) return false
+      }
+
       if (!needle) return true
       return (
         item.gif_id.toLowerCase().includes(needle) ||
@@ -175,7 +241,7 @@ function DownloadedMedia() {
         (creator || '').includes(needle)
       )
     })
-  }, [items, q, creatorFilter])
+  }, [items, q, creatorFilter, dayFilter])
 
   async function remove(item: MediaItem) {
     if (!confirm(`Remove ${item.gif_id}?`)) return
@@ -209,6 +275,23 @@ function DownloadedMedia() {
           className="pill-input px-4 py-2 text-sm outline-none"
         />
         <select
+          value={dayFilter}
+          onChange={(e) => setDayFilter(e.target.value)}
+          className="rounded-xl border border-[var(--color-border)] bg-[var(--color-panel)] px-3 py-2 text-sm"
+          title="Filter by download day"
+        >
+          <option value="">All days</option>
+          <option value="today">Today</option>
+          <option value="yesterday">Yesterday</option>
+          <option value="7d">Last 7 days</option>
+          {downloadDays.length ? <option disabled>────────</option> : null}
+          {downloadDays.map(({ key, count }) => (
+            <option key={key} value={key}>
+              {formatDayLabel(key)} ({count})
+            </option>
+          ))}
+        </select>
+        <select
           value={creatorFilter}
           onChange={(e) => setCreatorFilter(e.target.value)}
           className="rounded-xl border border-[var(--color-border)] bg-[var(--color-panel)] px-3 py-2 text-sm"
@@ -233,6 +316,37 @@ function DownloadedMedia() {
         </button>
       </PageHeader>
 
+      {downloadDays.length ? (
+        <div className="mb-4 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setDayFilter('')}
+            className={`rounded-full px-3 py-1 text-xs font-medium ${
+              dayFilter === ''
+                ? 'bg-[var(--color-blue)] text-white'
+                : 'border border-[var(--color-border)] text-[var(--color-muted)] hover:bg-white/5'
+            }`}
+          >
+            All
+          </button>
+          {downloadDays.slice(0, 14).map(({ key, count }) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setDayFilter(key)}
+              className={`rounded-full px-3 py-1 text-xs font-medium ${
+                dayFilter === key
+                  ? 'bg-[rgba(52,211,153,0.2)] text-[var(--color-green)] ring-1 ring-[var(--color-green)]/40'
+                  : 'border border-[var(--color-border)] text-[var(--color-muted)] hover:bg-white/5'
+              }`}
+            >
+              {formatDayLabel(key)}
+              <span className="ml-1 opacity-70">{count}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+
       <div className="card mb-5 flex flex-wrap items-center gap-4 p-4">
         <div>
           <p className="text-xs text-[var(--color-muted)]">On disk</p>
@@ -246,9 +360,22 @@ function DownloadedMedia() {
           <p className="text-xs text-[var(--color-muted)]">Creators</p>
           <p className="text-lg font-semibold">{creators.length}</p>
         </div>
-        <p className="ml-auto max-w-md text-xs text-[var(--color-muted)]">
-          Everything you’ve saved with Download / Save to disk. Open a file or jump into a creator
-          folder.
+        <div>
+          <p className="text-xs text-[var(--color-muted)]">Day filter</p>
+          <p className="text-sm font-semibold">
+            {dayFilter === ''
+              ? 'All days'
+              : dayFilter === '7d'
+                ? 'Last 7 days'
+                : dayFilter === 'today'
+                  ? 'Today'
+                  : dayFilter === 'yesterday'
+                    ? 'Yesterday'
+                    : formatDayLabel(dayFilter)}
+          </p>
+        </div>
+        <p className="ml-auto max-w-sm text-xs text-[var(--color-muted)]">
+          Filter by the day each file was downloaded. Open a file or jump into a creator folder.
         </p>
       </div>
 
@@ -261,7 +388,11 @@ function DownloadedMedia() {
       <MediaGrid
         items={filtered}
         loading={loading}
-        emptyText="No downloaded files yet. Use the extension or Save to disk on a post."
+        emptyText={
+          dayFilter
+            ? 'No downloads on this day. Try another day or clear the filter.'
+            : 'No downloaded files yet. Use the extension or Save to disk on a post.'
+        }
         onRemove={remove}
         showCreator
       />
