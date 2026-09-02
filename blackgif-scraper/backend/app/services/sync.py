@@ -391,8 +391,19 @@ async def add_by_url(db: Session, url: str, *, save_file: bool = False) -> Media
     """Catalog a gif. Only writes a file when save_file=True (explicit user download)."""
     info = await redgifs_client.get_gif(url)
     existing = db.scalar(select(MediaItem).where(MediaItem.gif_id == info.gif_id))
-    if existing and existing.status == "done" and existing.local_path:
+    if (
+        existing
+        and existing.status == "done"
+        and existing.local_path
+        and Path(existing.local_path).exists()
+        and Path(existing.local_path).stat().st_size > 0
+    ):
         return existing
+    if existing and existing.status == "done":
+        # Stale "done" without a real file — allow re-download
+        existing.status = "discovered"
+        existing.local_path = None
+        existing.error = None
 
     account = None
     if info.username:

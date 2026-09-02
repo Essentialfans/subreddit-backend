@@ -29,6 +29,14 @@ function gifIdFromText(text) {
   if (!text) return null
   const watch = String(text).match(/\/(?:watch|ifr)\/([A-Za-z0-9]+)/i)
   if (watch) return watch[1].toLowerCase()
+  // Niches / feeds put the active id in ?gif=
+  try {
+    const u = new URL(String(text), location.origin)
+    const q = u.searchParams.get('gif')
+    if (q && /^[A-Za-z0-9]{4,80}$/.test(q)) return q.toLowerCase()
+  } catch {
+    /* ignore */
+  }
   const cdn = String(text).match(
     /(?:media|thumbs\d*|files)\.redgifs\.com\/([A-Za-z][A-Za-z0-9]+)(?:-mobile|-poster|-small|-large)?(?:\.(?:mp4|webm|jpg|jpeg|png|webp|gif|m4s))?(?:\?|$)/i,
   )
@@ -125,16 +133,21 @@ function detectFromDom() {
 
   const watchMatch = path.match(/^\/(?:watch|ifr)\/([^/?#]+)/i)
   const watchGifId = watchMatch ? decodeURIComponent(watchMatch[1]).toLowerCase() : null
+  let queryGifId = null
+  try {
+    const q = new URLSearchParams(location.search).get('gif')
+    if (q && /^[A-Za-z0-9]{4,80}$/.test(q)) queryGifId = q.toLowerCase()
+  } catch {
+    /* ignore */
+  }
 
   const video = findPlayingVideo()
   const videoGifId = gifIdFromVideo(video)
 
-  // Priority: URL watch id → playing video → hooked (current page only)
-  let gifId = watchGifId || videoGifId || null
+  // Priority: URL watch id → playing video → ?gif= → hooked
+  let gifId = watchGifId || videoGifId || queryGifId || null
   if (!gifId && hookedGif) {
-    // Accept hook only if no conflicting player id, and on profile pages
-    // only after we've confirmed a video exists (avoid sticky previous tab)
-    if (video || watchGifId) gifId = hookedGif.toLowerCase()
+    if (video || watchGifId || queryGifId) gifId = hookedGif.toLowerCase()
     else if (!profileUsername) gifId = hookedGif.toLowerCase()
   }
 
