@@ -115,6 +115,15 @@ def list_library(
         out = [m for m in out if m.is_viral]
     elif viral is False:
         out = [m for m in out if not m.is_viral]
+    if status == "done":
+        # Client-facing order: newest download first (SQLite nulls/order can be flaky)
+        out.sort(
+            key=lambda m: (
+                m.downloaded_at.timestamp() if m.downloaded_at else 0,
+                m.views or 0,
+            ),
+            reverse=True,
+        )
     return out
 
 

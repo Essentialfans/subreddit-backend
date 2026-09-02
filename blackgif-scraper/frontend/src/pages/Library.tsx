@@ -221,7 +221,7 @@ function DownloadedMedia() {
     const yesterdayStart = startOfLocalDay(new Date(Date.now() - 86400000))
     const weekStart = startOfLocalDay(new Date(Date.now() - 6 * 86400000))
 
-    return items.filter((item) => {
+    const list = items.filter((item) => {
       const creator = usernameFromItem(item)
       if (creatorFilter && creator !== creatorFilter) return false
 
@@ -244,7 +244,33 @@ function DownloadedMedia() {
         (creator || '').includes(needle)
       )
     })
+
+    // Newest download first, always
+    list.sort((a, b) => {
+      const ta = new Date(a.downloaded_at || a.discovered_at || 0).getTime()
+      const tb = new Date(b.downloaded_at || b.discovered_at || 0).getTime()
+      return tb - ta
+    })
+    return list
   }, [items, q, creatorFilter, dayFilter])
+
+  /** Day sections for categorised browsing (newest day on top) */
+  const dayGroups = useMemo(() => {
+    const map = new Map<string, MediaItem[]>()
+    for (const item of filtered) {
+      const key = dayKeyFromIso(item.downloaded_at || item.discovered_at) || 'unknown'
+      const bucket = map.get(key) || []
+      bucket.push(item)
+      map.set(key, bucket)
+    }
+    return [...map.entries()]
+      .sort((a, b) => b[0].localeCompare(a[0]))
+      .map(([key, groupItems]) => ({
+        key,
+        label: key === 'unknown' ? 'Unknown day' : formatDayLabel(key),
+        items: groupItems,
+      }))
+  }, [filtered])
 
   async function remove(item: MediaItem) {
     if (!confirm(`Remove ${item.gif_id}?`)) return
@@ -367,7 +393,7 @@ function DownloadedMedia() {
           <p className="text-xs text-[var(--color-muted)]">Day filter</p>
           <p className="text-sm font-semibold">
             {dayFilter === ''
-              ? 'All days'
+              ? 'All days (grouped)'
               : dayFilter === '7d'
                 ? 'Last 7 days'
                 : dayFilter === 'today'
@@ -378,7 +404,7 @@ function DownloadedMedia() {
           </p>
         </div>
         <p className="ml-auto max-w-sm text-xs text-[var(--color-muted)]">
-          Filter by the day each file was downloaded. Open a file or jump into a creator folder.
+          Grouped by download day — newest day and newest clip first.
         </p>
       </div>
 
@@ -388,17 +414,37 @@ function DownloadedMedia() {
         </div>
       ) : null}
 
-      <MediaGrid
-        items={filtered}
-        loading={loading}
-        emptyText={
-          dayFilter
+      {loading ? (
+        <p className="mt-6 text-sm text-[var(--color-muted)]">Loading…</p>
+      ) : !filtered.length ? (
+        <p className="mt-6 text-sm text-[var(--color-muted)]">
+          {dayFilter
             ? 'No downloads on this day. Try another day or clear the filter.'
-            : 'No downloaded files yet. Use the extension or Save to disk on a post.'
-        }
-        onRemove={remove}
-        showCreator
-      />
+            : 'No downloaded files yet. Use the extension or Save to disk on a post.'}
+        </p>
+      ) : (
+        <div className="space-y-8">
+          {dayGroups.map((group) => (
+            <section key={group.key}>
+              <div className="mb-3 flex items-baseline justify-between gap-3 border-b border-[var(--color-border)] pb-2">
+                <h2 className="font-[family-name:var(--font-display)] text-lg font-semibold tracking-tight">
+                  {group.label}
+                </h2>
+                <span className="text-xs text-[var(--color-muted)]">
+                  {group.items.length} file{group.items.length === 1 ? '' : 's'}
+                </span>
+              </div>
+              <MediaGrid
+                items={group.items}
+                loading={false}
+                emptyText=""
+                onRemove={remove}
+                showCreator
+              />
+            </section>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
