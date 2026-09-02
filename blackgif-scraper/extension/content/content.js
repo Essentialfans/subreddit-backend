@@ -146,14 +146,15 @@ function gifIdFromVideo(video) {
 }
 
 /**
- * Prefer on-screen player + URL. Hooked attrs are a hint only when they
- * match the player or when nothing else is available yet.
+ * Prefer on-screen player. Never trust a stale niches ?gif= query while
+ * a video is playing — that caused false "Already downloaded" for the wrong clip.
  */
 function detectFromDom() {
   const path = location.pathname.replace(/\/+$/, '')
   const profileUsername = profileUsernameFromPath()
   const hookedGif = document.documentElement.getAttribute('data-bg-gif-id')
   const hookedUser = document.documentElement.getAttribute('data-bg-username')
+  const hookedSource = document.documentElement.getAttribute('data-bg-gif-source')
 
   const watchMatch = path.match(/^\/(?:watch|ifr)\/([^/?#]+)/i)
   const watchGifId = watchMatch ? decodeURIComponent(watchMatch[1]).toLowerCase() : null
@@ -167,13 +168,19 @@ function detectFromDom() {
 
   const video = findPlayingVideo()
   const videoGifId = gifIdFromVideo(video)
+  const videoPlaying = Boolean(video && !video.paused)
 
-  // Priority: URL watch id → playing video → ?gif= → hooked
-  let gifId = watchGifId || videoGifId || queryGifId || null
-  if (!gifId && hookedGif) {
-    if (video || watchGifId || queryGifId) gifId = hookedGif.toLowerCase()
-    else if (!profileUsername) gifId = hookedGif.toLowerCase()
+  // Priority: /watch/ path → video element → play-hook → (?gif= only if no player)
+  let gifId = watchGifId || videoGifId || null
+  if (!gifId && hookedGif && (hookedSource === 'video' || hookedSource === 'play' || hookedSource === 'dom' || hookedSource === 'recent-cdn' || hookedSource === 'api' || videoPlaying)) {
+    // Accept hook while a player is active; ignore bare query
+    gifId = hookedGif.toLowerCase()
   }
+  if (!gifId && !video && queryGifId) {
+    gifId = queryGifId
+  }
+  // Explicitly ignore queryGifId when a video is on screen but we still
+  // haven't resolved id — better to show "detecting" than a false Downloaded.
 
   // Username: profile URL always wins on /users/...
   let username = profileUsername || null
@@ -199,7 +206,6 @@ function detectFromDom() {
     username = best
   }
 
-  // Meta tags only on dedicated watch pages
   if (!gifId && watchGifId) {
     gifId =
       gifIdFromText(document.querySelector('link[rel="canonical"]')?.href) ||
