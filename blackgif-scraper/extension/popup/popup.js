@@ -91,7 +91,7 @@ function markDownloadedUi(username, gifId) {
 
 function enableGifActions(ctx) {
   els.pageLabel.textContent = ctx.username
-    ? `Ready · @${ctx.username}`
+    ? `Ready · ${ctx.gifId} · @${ctx.username}`
     : `Ready · ${ctx.gifId}`
   if (els.downloadHint) els.downloadHint.textContent = 'Click Download this gif to save the file'
   if (ctx.username) {
