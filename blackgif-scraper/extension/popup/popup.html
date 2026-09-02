@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BlackGif Scraper</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <div class="brand">
+        <span class="logo">BG</span>
+        <div>
+          <h1>BlackGif</h1>
+          <p class="sub">Browser sync</p>
+        </div>
+      </div>
+      <span id="status" class="pill offline">Offline</span>
+    </header>
+
+    <p id="offline-help" class="offline-help" hidden>
+      API not running. In Terminal:
+      <code>cd ~/subreddit-backend/blackgif-scraper && ./install-autostart-mac.sh</code>
+      then click Refresh.
+    </p>
+
+    <section class="page-actions" id="page-actions">
+      <p class="page-label" id="page-label">Detecting page…</p>
+      <button id="btn-save-file" class="primary full download-hero" disabled>Download this gif</button>
+      <p class="hint-line" id="download-hint">One click — saves whatever you’re watching</p>
+      <div class="page-buttons">
+        <button id="btn-add" class="secondary" disabled>Add to library</button>
+        <button id="btn-track" class="secondary" disabled>Track creator</button>
+      </div>
+    </section>
+
+    <section class="stats" id="stats">
+      <div class="stat"><span id="stat-accounts">—</span><label>Accounts</label></div>
+      <div class="stat"><span id="stat-downloaded">—</span><label>Downloaded</label></div>
+      <div class="stat"><span id="stat-queued">—</span><label>Queued</label></div>
+    </section>
+
+    <section class="actions">
+      <button id="btn-sync" class="primary" disabled>Sync all</button>
+      <button id="btn-refresh" class="ghost">Refresh</button>
+    </section>
+
+    <section class="settings">
+      <label>
+        API base URL
+        <input id="api-base" type="url" placeholder="http://127.0.0.1:8000" />
+      </label>
+      <label>
+        Auth token <span class="hint">(optional)</span>
+        <input id="auth-token" type="password" placeholder="Bearer token if set on server" />
+      </label>
+      <label>
+        Default min views
+        <input id="min-views" type="number" min="0" step="1000" />
+      </label>
+      <button id="btn-save" class="secondary">Save settings</button>
+      <p id="toast" class="toast" hidden></p>
+    </section>
+
+    <footer>
+      <span>Download this gif = save the video on screen. No paste needed.</span>
+    </footer>
+
+    <script src="popup.js" type="module"></script>
+  </body>
+</html>
