@@ -163,6 +163,19 @@ async function handleMessage(message) {
       }
     }
 
+    case 'LOOKUP_GIF': {
+      const gifId = String(message.gifId || '').trim().toLowerCase()
+      if (!gifId) throw new Error('Missing gif id')
+      try {
+        return await api(`/api/library/gif/${encodeURIComponent(gifId)}`)
+      } catch (err) {
+        if (String(err.message || '').includes('Not in library') || String(err.message || '').includes('Not Found')) {
+          return null
+        }
+        throw err
+      }
+    }
+
     case 'STATS':
       return api('/api/stats')
 

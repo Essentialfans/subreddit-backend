@@ -195,7 +195,7 @@ function CreatorMedia({ username }: { username: string }) {
         >
           <option value="">All statuses</option>
           <option value="discovered">Not saved yet</option>
-          <option value="done">Saved to disk</option>
+          <option value="done">Downloaded</option>
           <option value="failed">Failed</option>
         </select>
         <button
@@ -272,14 +272,20 @@ function CreatorMedia({ username }: { username: string }) {
                 </div>
               )}
               <div className="absolute left-3 top-3 flex flex-wrap gap-1">
+                {item.status === 'done' ? (
+                  <span className="rounded-full bg-[rgba(52,211,153,0.95)] px-2 py-1 text-xs font-semibold text-black backdrop-blur">
+                    Downloaded
+                  </span>
+                ) : (
+                  <span className="rounded-full bg-black/60 px-2 py-1 text-xs capitalize backdrop-blur">
+                    {item.status === 'discovered' ? 'not saved' : item.status}
+                  </span>
+                )}
                 {item.is_viral ? (
                   <span className="rounded-full bg-[rgba(167,139,250,0.9)] px-2 py-1 text-xs font-medium backdrop-blur">
                     Viral
                   </span>
                 ) : null}
-                <span className="rounded-full bg-black/60 px-2 py-1 text-xs capitalize backdrop-blur">
-                  {item.status === 'done' ? 'saved' : item.status === 'discovered' ? 'preview' : item.status}
-                </span>
               </div>
             </div>
             <div className="space-y-2 p-4">
@@ -299,9 +305,9 @@ function CreatorMedia({ username }: { username: string }) {
                 ) : (
                   <a
                     href={`/api/library/${item.id}/file`}
-                    className="flex flex-1 items-center justify-center gap-1 rounded-xl border border-[var(--color-border)] px-3 py-2 text-xs hover:bg-white/5"
+                    className="flex flex-1 items-center justify-center gap-1 rounded-xl border border-[var(--color-green)]/40 bg-[rgba(52,211,153,0.08)] px-3 py-2 text-xs text-[var(--color-green)] hover:bg-[rgba(52,211,153,0.14)]"
                   >
-                    Open file
+                    Downloaded · Open
                   </a>
                 )}
                 <a

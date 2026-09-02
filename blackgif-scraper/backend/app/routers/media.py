@@ -50,6 +50,21 @@ def list_folders(db: Session = Depends(get_db)):
     return sync_service.list_creator_folders(db)
 
 
+@router.get("/library/gif/{gif_id}", response_model=MediaOut)
+def get_gif_status(gif_id: str, db: Session = Depends(get_db)):
+    """Lookup a gif — used by the extension to show Downloaded vs not."""
+    item = sync_service.get_by_gif_id(db, gif_id)
+    if not item:
+        raise HTTPException(404, "Not in library")
+    return _media_out(db, item)
+
+
+@router.post("/library/reconcile")
+def reconcile_library(db: Session = Depends(get_db)):
+    """Mark items as Downloaded when their files already exist on disk."""
+    return sync_service.reconcile_downloads(db)
+
+
 @router.get("/library", response_model=list[MediaOut])
 def list_library(
     status: str | None = None,
@@ -83,6 +98,10 @@ def list_library(
         stmt = stmt.where((MediaItem.title.ilike(like)) | (MediaItem.gif_id.ilike(like)))
 
     items = list(db.scalars(stmt.limit(limit)).all())
+    # Keep Downloaded badge accurate if files were moved/restored
+    for i in items:
+        sync_service.mark_downloaded_if_on_disk(db, i)
+    db.commit()
     out = [_media_out(db, i) for i in items]
     if viral is True:
         out = [m for m in out if m.is_viral]

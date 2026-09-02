@@ -304,23 +304,59 @@ async function refreshPanel() {
 
   if (ctx.gifId && ctx.url) {
     downloadBtn.hidden = false
-    downloadBtn.textContent = 'Download'
+    downloadBtn.textContent = '…'
+    downloadBtn.disabled = true
     setMeta(ctx.username ? `${ctx.gifId} · @${ctx.username}` : ctx.gifId)
-    downloadBtn.onclick = async () => {
-      downloadBtn.disabled = true
-      downloadBtn.textContent = '…'
-      try {
-        const item = await send('DOWNLOAD_URL', { url: ctx.url, saveFile: true })
-        const ok = item.status === 'done'
-        setMeta(`${item.status}: ${item.gif_id}`, ok ? 'ok' : 'err')
-        downloadBtn.textContent = ok ? 'Saved ✓' : 'Retry'
-        downloadBtn.disabled = ok
-      } catch (err) {
-        setMeta(err.message, 'err')
-        downloadBtn.textContent = 'Download'
+
+    // Check if already downloaded so we don't offer a duplicate save
+    send('LOOKUP_GIF', { gifId: ctx.gifId })
+      .then((item) => {
+        if (item && item.status === 'done') {
+          downloadBtn.textContent = 'Downloaded'
+          downloadBtn.disabled = true
+          setMeta(
+            ctx.username ? `Downloaded · @${ctx.username}` : 'Already downloaded',
+            'ok',
+          )
+          return
+        }
         downloadBtn.disabled = false
-      }
-    }
+        downloadBtn.textContent = 'Download'
+        downloadBtn.onclick = async () => {
+          downloadBtn.disabled = true
+          downloadBtn.textContent = '…'
+          try {
+            const saved = await send('DOWNLOAD_URL', { url: ctx.url, saveFile: true })
+            const ok = saved.status === 'done'
+            setMeta(ok ? `Downloaded: ${saved.gif_id}` : `${saved.status}: ${saved.gif_id}`, ok ? 'ok' : 'err')
+            downloadBtn.textContent = ok ? 'Downloaded' : 'Retry'
+            downloadBtn.disabled = ok
+          } catch (err) {
+            setMeta(err.message, 'err')
+            downloadBtn.textContent = 'Download'
+            downloadBtn.disabled = false
+          }
+        }
+      })
+      .catch(() => {
+        downloadBtn.disabled = false
+        downloadBtn.textContent = 'Download'
+        downloadBtn.onclick = async () => {
+          downloadBtn.disabled = true
+          downloadBtn.textContent = '…'
+          try {
+            const saved = await send('DOWNLOAD_URL', { url: ctx.url, saveFile: true })
+            const ok = saved.status === 'done'
+            setMeta(ok ? `Downloaded: ${saved.gif_id}` : `${saved.status}: ${saved.gif_id}`, ok ? 'ok' : 'err')
+            downloadBtn.textContent = ok ? 'Downloaded' : 'Retry'
+            downloadBtn.disabled = ok
+          } catch (err) {
+            setMeta(err.message, 'err')
+            downloadBtn.textContent = 'Download'
+            downloadBtn.disabled = false
+          }
+        }
+      })
     return
   }
 

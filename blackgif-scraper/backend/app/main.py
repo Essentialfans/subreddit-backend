@@ -33,6 +33,19 @@ async def scheduled_sync() -> None:
 async def lifespan(_: FastAPI):
     init_db()
     settings.downloads_path.mkdir(parents=True, exist_ok=True)
+    # Mark already-downloaded files so Library shows "Downloaded"
+    db = SessionLocal()
+    try:
+        result = sync_service.reconcile_downloads(db)
+        logger.info(
+            "Reconciled downloads — checked=%s newly_marked=%s",
+            result.get("checked"),
+            result.get("newly_marked"),
+        )
+    except Exception:
+        logger.exception("Download reconcile failed")
+    finally:
+        db.close()
     scheduler.add_job(
         scheduled_sync,
         "interval",

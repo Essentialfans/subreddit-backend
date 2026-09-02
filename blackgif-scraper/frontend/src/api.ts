@@ -144,6 +144,11 @@ export const api = {
     return request<MediaItem[]>(`/api/library${s ? `?${s}` : ''}`)
   },
   libraryFolders: () => request<CreatorFolder[]>('/api/library/folders'),
+  reconcileDownloads: () =>
+    request<{ checked: number; newly_marked: number }>('/api/library/reconcile', {
+      method: 'POST',
+    }),
+  getGif: (gifId: string) => request<MediaItem>(`/api/library/gif/${encodeURIComponent(gifId)}`),
   downloadUrl: (url: string, saveFile = true) =>
     request<MediaItem>('/api/download', {
       method: 'POST',

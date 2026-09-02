@@ -111,11 +111,28 @@ function applyPageContext(ctx) {
     els.pageLabel.textContent = pageCtx.username
       ? `Gif ${pageCtx.gifId} · @${pageCtx.username}`
       : `Gif ${pageCtx.gifId}`
-    els.download.disabled = false
     if (pageCtx.username) {
       els.track.disabled = false
       els.track.textContent = 'Track creator'
     }
+    // Probe library so already-downloaded gifs show clearly
+    send('LOOKUP_GIF', { gifId: pageCtx.gifId })
+      .then((item) => {
+        if (item?.status === 'done') {
+          els.download.disabled = true
+          els.download.textContent = 'Downloaded'
+          els.pageLabel.textContent = pageCtx.username
+            ? `Downloaded · @${pageCtx.username}`
+            : `Downloaded · ${pageCtx.gifId}`
+        } else {
+          els.download.disabled = false
+          els.download.textContent = 'Add to library'
+        }
+      })
+      .catch(() => {
+        els.download.disabled = false
+        els.download.textContent = 'Add to library'
+      })
     return
   }
 

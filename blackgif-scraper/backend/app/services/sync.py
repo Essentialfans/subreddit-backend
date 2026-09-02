@@ -17,6 +17,110 @@ from .redgifs import redgifs_client
 logger = logging.getLogger(__name__)
 
 
+def find_existing_file(username: str | None, gif_id: str) -> Path | None:
+    """Return on-disk path for gif if already downloaded."""
+    gif_id = (gif_id or "").lower()
+    if not gif_id:
+        return None
+    roots: list[Path] = []
+    if username:
+        roots.append(settings.downloads_path / username.lower())
+    roots.append(settings.downloads_path)
+    # Also scan one level of creator folders
+    try:
+        for child in settings.downloads_path.iterdir():
+            if child.is_dir():
+                roots.append(child)
+    except Exception:
+        pass
+    seen: set[Path] = set()
+    for root in roots:
+        if root in seen or not root.is_dir():
+            continue
+        seen.add(root)
+        for ext in ("mp4", "webm", "gif", "mov", "mkv"):
+            candidate = root / f"{gif_id}.{ext}"
+            if candidate.exists() and candidate.stat().st_size > 0:
+                return candidate
+            # Case-insensitive match on case-sensitive FS
+            try:
+                for p in root.glob(f"{gif_id}.*"):
+                    if p.suffix.lower().lstrip(".") in ("mp4", "webm", "gif", "mov", "mkv") and p.stat().st_size > 0:
+                        return p
+            except Exception:
+                pass
+    return None
+
+
+def mark_downloaded_if_on_disk(db: Session, item: MediaItem) -> bool:
+    """If the file already exists, mark item as downloaded (done)."""
+    if item.status == "done" and item.local_path and Path(item.local_path).exists():
+        return True
+    if item.local_path and Path(item.local_path).exists() and Path(item.local_path).stat().st_size > 0:
+        item.status = "done"
+        if not item.downloaded_at:
+            item.downloaded_at = datetime.utcnow()
+        return True
+    username = _username(db, item)
+    path = find_existing_file(username, item.gif_id)
+    if path:
+        item.local_path = str(path)
+        item.status = "done"
+        item.error = None
+        if not item.downloaded_at:
+            item.downloaded_at = datetime.utcnow()
+        return True
+    return False
+
+
+def reconcile_downloads(db: Session) -> dict:
+    """Scan downloads folder and mark matching library items as Downloaded."""
+    marked = 0
+    checked = 0
+    items = db.scalars(select(MediaItem)).all()
+    for item in items:
+        checked += 1
+        before = item.status
+        if mark_downloaded_if_on_disk(db, item) and before != "done":
+            marked += 1
+    db.commit()
+    return {"checked": checked, "newly_marked": marked}
+
+
+def get_by_gif_id(db: Session, gif_id: str) -> MediaItem | None:
+    gif_id = (gif_id or "").strip().lower()
+    if not gif_id:
+        return None
+    item = db.scalar(select(MediaItem).where(MediaItem.gif_id == gif_id))
+    if item:
+        if mark_downloaded_if_on_disk(db, item):
+            db.commit()
+        return item
+    # File on disk but not in DB yet — create a lightweight catalog row marked downloaded
+    path = find_existing_file(None, gif_id)
+    if not path:
+        return None
+    username = path.parent.name if path.parent.name != "downloads" else None
+    account = None
+    if username and username != "unknown":
+        account = db.scalar(select(Account).where(Account.username == username.lower()))
+    item = MediaItem(
+        gif_id=gif_id,
+        account_id=account.id if account else None,
+        title=gif_id,
+        url=f"https://www.redgifs.com/watch/{gif_id}",
+        thumbnail_url=None,
+        views=0,
+        status="done",
+        local_path=str(path),
+        downloaded_at=datetime.utcnow(),
+    )
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return item
+
+
 def viral_threshold(db: Session, item: MediaItem) -> int:
     """Min views that mark a post viral — account setting, else global default."""
     if item.account_id:
@@ -149,6 +253,7 @@ async def sync_account(db: Session, account: Account, *, download: bool = False)
                 # Refresh catalog statuses only — never touch done/failed files
                 if existing.status in ("queued", "skipped", "discovered"):
                     existing.status = "discovered"
+                mark_downloaded_if_on_disk(db, existing)
                 continue
 
             found += 1
@@ -168,6 +273,11 @@ async def sync_account(db: Session, account: Account, *, download: bool = False)
                 published_at=info.published_at,
             )
             db.add(item)
+            db.flush()
+            mark_downloaded_if_on_disk(db, item)
+
+        # Reconcile any files already on disk for this creator
+        reconcile_downloads(db)
 
         account.last_synced_at = datetime.utcnow()
         job.items_found = found
@@ -230,7 +340,9 @@ async def download_media_id(db: Session, media_id: int) -> bool:
     item = db.get(MediaItem, media_id)
     if not item:
         return False
-    if item.status == "done" and item.local_path:
+    # Already downloaded — never fetch again
+    if mark_downloaded_if_on_disk(db, item):
+        db.commit()
         return True
 
     item.status = "downloading"
@@ -250,6 +362,14 @@ async def download_media_id(db: Session, media_id: int) -> bool:
             except Exception:
                 username = None
         username = username or "unknown"
+        # Double-check disk under resolved username before network download
+        existing_path = find_existing_file(username, item.gif_id)
+        if existing_path:
+            item.local_path = str(existing_path)
+            item.status = "done"
+            item.downloaded_at = item.downloaded_at or datetime.utcnow()
+            db.commit()
+            return True
         dest = settings.downloads_path / username
         path = await redgifs_client.download(item.url, dest, item.gif_id)
         item.local_path = str(path)
