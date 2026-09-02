@@ -75,7 +75,7 @@ def list_library(
     limit: int = Query(500, ge=1, le=1000),
     db: Session = Depends(get_db),
 ):
-    stmt = select(MediaItem).order_by(MediaItem.views.desc())
+    stmt = select(MediaItem)
     if status:
         if status == "discovered":
             stmt = stmt.where(MediaItem.status.in_(["discovered", "queued", "skipped"]))
@@ -96,6 +96,14 @@ def list_library(
     if q:
         like = f"%{q}%"
         stmt = stmt.where((MediaItem.title.ilike(like)) | (MediaItem.gif_id.ilike(like)))
+
+    if status == "done":
+        stmt = stmt.order_by(
+            MediaItem.downloaded_at.desc().nulls_last(),
+            MediaItem.views.desc(),
+        )
+    else:
+        stmt = stmt.order_by(MediaItem.views.desc())
 
     items = list(db.scalars(stmt.limit(limit)).all())
     # Keep Downloaded badge accurate if files were moved/restored

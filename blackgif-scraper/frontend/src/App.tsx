@@ -14,6 +14,7 @@ export default function App() {
           <Route index element={<Dashboard />} />
           <Route path="accounts" element={<Accounts />} />
           <Route path="library" element={<Library />} />
+          <Route path="library/downloaded" element={<Library />} />
           <Route path="library/:username" element={<Library />} />
           <Route path="download" element={<DownloadPage />} />
           <Route path="settings" element={<SettingsPage />} />
