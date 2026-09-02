@@ -31,6 +31,7 @@ const els = {
   authToken: document.getElementById('auth-token'),
   minViews: document.getElementById('min-views'),
   toast: document.getElementById('toast'),
+  offlineHelp: document.getElementById('offline-help'),
 }
 
 let pageCtx = null
@@ -43,11 +44,26 @@ function toast(msg) {
   }, 2500)
 }
 
-function setOnline(online) {
+function setOnline(online, errMsg) {
   els.status.textContent = online ? 'Online' : 'Offline'
   els.status.classList.toggle('online', online)
   els.status.classList.toggle('offline', !online)
   els.sync.disabled = !online
+  if (els.offlineHelp) {
+    els.offlineHelp.hidden = online
+    if (!online && errMsg) {
+      els.offlineHelp.innerHTML =
+        `Offline: ${escapeHtml(errMsg)}<br/>On your Mac run <code>cd blackgif-scraper && ./install-autostart-mac.sh</code> then Refresh.`
+    }
+  }
+}
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
 }
 
 function parseWatchInput(raw) {
@@ -123,14 +139,15 @@ async function loadSettings() {
 
 async function refreshStats() {
   try {
-    await send('HEALTH')
+    const status = await send('CONNECTION_STATUS')
+    if (!status.online) throw new Error(status.lastHealthError || status.hint || 'API offline')
     setOnline(true)
     const stats = await send('STATS')
     els.accounts.textContent = String(stats.total_accounts ?? 0)
     els.downloaded.textContent = String(stats.downloaded ?? 0)
     els.queued.textContent = String(stats.queued ?? 0)
   } catch (err) {
-    setOnline(false)
+    setOnline(false, err.message)
     els.accounts.textContent = '—'
     els.downloaded.textContent = '—'
     els.queued.textContent = '—'

@@ -12,11 +12,18 @@ Chrome/Edge (Manifest V3) companion for the local BlackGif Scraper API.
 
 ## Install (Chrome / Edge)
 
-1. Start the BlackGif backend: `uvicorn app.main:app --port 8000`
+1. **Keep the API Online permanently (recommended on Mac):**
+   ```bash
+   cd blackgif-scraper
+   ./install-autostart-mac.sh
+   ```
+   This installs a LaunchAgent so the API starts at login and restarts if it dies.
 2. Open `chrome://extensions` (or `edge://extensions`)
 3. Enable **Developer mode**
 4. **Load unpacked** → select this `extension/` folder (or click **Reload** after `git pull`)
-5. Refresh any open RedGifs tabs, then open the popup — status should be **Online**
+5. Open the popup — status should be **Online**
+
+If you see Offline, the local API at `http://127.0.0.1:8000` is not running. Run the install script above, then Refresh.
 
 ### Niches feed tip
 

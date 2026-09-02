@@ -9,13 +9,33 @@ const DEFAULTS = {
   defaultMinViews: 10000,
 }
 
+const HEALTH_ALARM = 'blackgif-health'
+let lastOnline = false
+
 async function getSettings() {
   const stored = await chrome.storage.sync.get(DEFAULTS)
   return { ...DEFAULTS, ...stored }
 }
 
+function candidateBases(apiBase) {
+  const primary = String(apiBase || DEFAULTS.apiBase).replace(/\/$/, '')
+  const bases = [primary]
+  try {
+    const u = new URL(primary)
+    if (u.hostname === '127.0.0.1') {
+      bases.push(`${u.protocol}//localhost${u.port ? `:${u.port}` : ''}`)
+    } else if (u.hostname === 'localhost') {
+      bases.push(`${u.protocol}//127.0.0.1${u.port ? `:${u.port}` : ''}`)
+    }
+  } catch {
+    bases.push('http://127.0.0.1:8000', 'http://localhost:8000')
+  }
+  return [...new Set(bases)]
+}
+
 async function api(path, options = {}) {
-  const { apiBase, authToken } = await getSettings()
+  const settings = await getSettings()
+  const { authToken } = settings
   const headers = new Headers(options.headers || {})
   if (options.body && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json')
@@ -23,35 +43,83 @@ async function api(path, options = {}) {
   if (authToken) {
     headers.set('Authorization', `Bearer ${authToken}`)
   }
-  const res = await fetch(`${apiBase.replace(/\/$/, '')}${path}`, {
-    ...options,
-    headers,
-  })
-  if (!res.ok) {
-    let detail = res.statusText
+
+  const bases = candidateBases(settings.apiBase)
+  let lastErr = null
+  for (const base of bases) {
     try {
-      const data = await res.json()
-      detail = data.detail || JSON.stringify(data)
-    } catch {
-      /* ignore */
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), options.timeoutMs || 4000)
+      const res = await fetch(`${base}${path}`, {
+        ...options,
+        headers,
+        signal: controller.signal,
+      })
+      clearTimeout(timer)
+      if (!res.ok) {
+        let detail = res.statusText
+        try {
+          const data = await res.json()
+          detail = data.detail || JSON.stringify(data)
+        } catch {
+          /* ignore */
+        }
+        throw new Error(typeof detail === 'string' ? detail : 'Request failed')
+      }
+      // Remember a working base so later calls prefer it
+      if (base !== settings.apiBase) {
+        await chrome.storage.sync.set({ apiBase: base })
+      }
+      if (res.status === 204) return null
+      return res.json()
+    } catch (err) {
+      lastErr = err
     }
-    throw new Error(typeof detail === 'string' ? detail : 'Request failed')
   }
-  if (res.status === 204) return null
-  return res.json()
+  throw lastErr || new Error('API unreachable — start BlackGif with ./install-autostart-mac.sh')
+}
+
+async function checkHealth() {
+  try {
+    const result = await api('/api/health', { timeoutMs: 3000 })
+    lastOnline = true
+    await chrome.storage.local.set({
+      lastOnline: true,
+      lastHealthAt: Date.now(),
+      lastHealthError: null,
+    })
+    return result
+  } catch (err) {
+    lastOnline = false
+    await chrome.storage.local.set({
+      lastOnline: false,
+      lastHealthAt: Date.now(),
+      lastHealthError: err?.message || String(err),
+    })
+    throw err
+  }
 }
 
 async function refreshBadge() {
   try {
+    await checkHealth()
     const stats = await api('/api/stats')
     const n = (stats.queued || 0) + (stats.downloaded || 0)
     const text = n > 0 ? String(Math.min(n, 999)) : ''
     await chrome.action.setBadgeText({ text })
     await chrome.action.setBadgeBackgroundColor({ color: '#4f7cff' })
+    await chrome.action.setTitle({ title: 'BlackGif Scraper — Online' })
   } catch {
     await chrome.action.setBadgeText({ text: '!' })
     await chrome.action.setBadgeBackgroundColor({ color: '#f87171' })
+    await chrome.action.setTitle({
+      title: 'BlackGif Offline — run ./install-autostart-mac.sh in blackgif-scraper',
+    })
   }
+}
+
+function ensureAlarms() {
+  chrome.alarms.create(HEALTH_ALARM, { periodInMinutes: 1 })
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -73,7 +141,27 @@ async function handleMessage(message) {
     }
 
     case 'HEALTH':
-      return api('/api/health')
+      return checkHealth()
+
+    case 'CONNECTION_STATUS': {
+      const local = await chrome.storage.local.get({
+        lastOnline: false,
+        lastHealthAt: null,
+        lastHealthError: null,
+      })
+      try {
+        await checkHealth()
+        return { online: true, ...local, lastOnline: true, lastHealthError: null }
+      } catch (err) {
+        return {
+          online: false,
+          lastOnline: false,
+          lastHealthAt: Date.now(),
+          lastHealthError: err?.message || String(err),
+          hint: 'Start API: cd blackgif-scraper && ./install-autostart-mac.sh',
+        }
+      }
+    }
 
     case 'STATS':
       return api('/api/stats')
@@ -99,7 +187,6 @@ async function handleMessage(message) {
         await refreshBadge()
         return account
       } catch (err) {
-        // Already tracked → return existing row
         if (String(err.message || '').toLowerCase().includes('already')) {
           const accounts = await api('/api/accounts')
           const existing = accounts.find((a) => a.username === username.toLowerCase())
@@ -112,7 +199,6 @@ async function handleMessage(message) {
     case 'DOWNLOAD_URL': {
       const url = String(message.url || '').trim()
       if (!url) throw new Error('Missing URL')
-      // Only write a file when the caller explicitly asks (floating Download button)
       const saveFile = message.saveFile === true
       const item = await api('/api/download', {
         method: 'POST',
@@ -151,14 +237,18 @@ async function handleMessage(message) {
 }
 
 chrome.runtime.onInstalled.addListener(() => {
+  ensureAlarms()
   refreshBadge()
 })
 
-chrome.alarms?.create?.('badge-refresh', { periodInMinutes: 2 })
-chrome.alarms?.onAlarm?.addListener((alarm) => {
-  if (alarm.name === 'badge-refresh') refreshBadge()
+chrome.runtime.onStartup.addListener(() => {
+  ensureAlarms()
+  refreshBadge()
 })
 
-// alarms permission not declared — use interval via setInterval polyfill in SW is flaky;
-// badge refreshes on each successful action instead.
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === HEALTH_ALARM) refreshBadge()
+})
+
+ensureAlarms()
 refreshBadge()

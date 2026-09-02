@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "BlackGif Scraper",
-  "version": "1.3.1",
+  "version": "1.4.0",
   "description": "Track RedGifs accounts and download viral clips into your local BlackGif Scraper.",
   "icons": {
     "16": "icons/icon16.png",
@@ -22,7 +22,7 @@
     "service_worker": "background/service-worker.js",
     "type": "module"
   },
-  "permissions": ["storage", "activeTab", "scripting"],
+  "permissions": ["storage", "activeTab", "scripting", "alarms"],
   "host_permissions": [
     "http://127.0.0.1:8000/*",
     "http://localhost:8000/*",
