@@ -55,7 +55,7 @@ function setOnline(online, errMsg) {
     els.offlineHelp.hidden = online
     if (!online && errMsg) {
       els.offlineHelp.innerHTML =
-        `Offline: ${escapeHtml(errMsg)}<br/>On your Mac run <code>cd blackgif-scraper && ./install-autostart-mac.sh</code> then Refresh.`
+        `Offline: ${escapeHtml(errMsg)}<br/>In Terminal run:<br/><code>cd ~/subreddit-backend/blackgif-scraper && ./install-autostart-mac.sh</code><br/>then click Refresh.`
     }
   }
 }
@@ -195,11 +195,16 @@ async function refreshStats() {
     els.downloaded.textContent = String(stats.downloaded ?? 0)
     els.queued.textContent = String(stats.queued ?? 0)
   } catch (err) {
-    setOnline(false, err.message)
+    const raw = err?.message || String(err)
+    const nice =
+      /failed to fetch|networkerror|aborted|unreachable|offline/i.test(raw)
+        ? 'API not running on this Mac (http://127.0.0.1:8000)'
+        : raw
+    setOnline(false, nice)
     els.accounts.textContent = '—'
     els.downloaded.textContent = '—'
     els.queued.textContent = '—'
-    console.warn(err)
+    // Don't rethrow — keeps Chrome from listing this as an extension crash
   }
 }
 
@@ -492,6 +497,6 @@ els.refresh.addEventListener('click', async () => {
   await loadPageContext()
 })
 
-await loadSettings()
+await loadSettings().catch(() => {})
 await refreshStats()
-await loadPageContext()
+await loadPageContext().catch(() => {})

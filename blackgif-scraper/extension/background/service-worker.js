@@ -76,7 +76,17 @@ async function api(path, options = {}) {
       lastErr = err
     }
   }
-  throw lastErr || new Error('API unreachable — start BlackGif with ./install-autostart-mac.sh')
+  throw new Error(
+    'API not running — in Terminal: cd ~/subreddit-backend/blackgif-scraper && ./install-autostart-mac.sh',
+  )
+}
+
+function friendlyErr(err) {
+  const raw = err?.message || String(err || '')
+  if (/failed to fetch|networkerror|abort/i.test(raw)) {
+    return 'API not running — cd ~/subreddit-backend/blackgif-scraper && ./install-autostart-mac.sh'
+  }
+  return raw || 'API unreachable'
 }
 
 async function checkHealth() {
@@ -91,12 +101,13 @@ async function checkHealth() {
     return result
   } catch (err) {
     lastOnline = false
+    const msg = friendlyErr(err)
     await chrome.storage.local.set({
       lastOnline: false,
       lastHealthAt: Date.now(),
-      lastHealthError: err?.message || String(err),
+      lastHealthError: msg,
     })
-    throw err
+    throw new Error(msg)
   }
 }
 
