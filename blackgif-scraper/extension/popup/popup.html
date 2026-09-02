@@ -26,15 +26,16 @@
 
     <section class="page-actions" id="page-actions">
       <p class="page-label" id="page-label">Detecting page…</p>
+      <button id="btn-save-file" class="primary full" disabled>Download</button>
       <div class="page-buttons">
-        <button id="btn-download" class="primary" disabled>Add to library</button>
+        <button id="btn-add" class="secondary" disabled>Add to library</button>
         <button id="btn-track" class="secondary" disabled>Track creator</button>
       </div>
       <label class="paste-label">
-        Or paste a watch URL / gif id
+        Or paste a watch URL / gif id to download
         <div class="paste-row">
           <input id="paste-url" type="text" placeholder="https://www.redgifs.com/watch/…" />
-          <button id="btn-paste-dl" class="primary compact">Save</button>
+          <button id="btn-paste-dl" class="primary compact">Download</button>
         </div>
       </label>
     </section>
@@ -68,7 +69,7 @@
     </section>
 
     <footer>
-      <span>Tip: Add to library = preview only. Save files from the dashboard Library, or use Download on the floating bar.</span>
+      <span>Download = save file. Add to library = preview only. Already saved shows as Downloaded.</span>
     </footer>
 
     <script src="popup.js" type="module"></script>

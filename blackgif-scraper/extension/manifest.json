@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "BlackGif Scraper",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "description": "Track RedGifs accounts and download viral clips into your local BlackGif Scraper.",
   "icons": {
     "16": "icons/icon16.png",

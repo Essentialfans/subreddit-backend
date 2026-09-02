@@ -142,7 +142,9 @@ function detectFromDom() {
   gifId =
     gifId ||
     gifIdFromText(document.querySelector('link[rel="canonical"]')?.href) ||
-    gifIdFromText(document.querySelector('meta[property="og:url"]')?.content)
+    gifIdFromText(document.querySelector('meta[property="og:url"]')?.content) ||
+    gifIdFromText(document.querySelector('meta[property="og:video"]')?.content) ||
+    gifIdFromText(document.querySelector('meta[property="og:image"]')?.content)
 
   const video = findPlayingVideo()
   if (video) {
@@ -154,6 +156,22 @@ function detectFromDom() {
         gifId = gifId || id
         break
       }
+    }
+  }
+
+  if (!gifId) {
+    // Prefer recent CDN hits (feed players often use blob: src)
+    try {
+      const resources = performance.getEntriesByType('resource').slice(-100).reverse()
+      for (const e of resources) {
+        const id = gifIdFromText(e.name)
+        if (id) {
+          gifId = id
+          break
+        }
+      }
+    } catch {
+      /* ignore */
     }
   }
 

@@ -133,10 +133,16 @@ h1 {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+  margin-top: 8px;
 }
 
 .page-buttons .primary,
 .page-buttons .secondary {
+  width: 100%;
+  margin-top: 0;
+}
+
+button.full {
   width: 100%;
   margin-top: 0;
 }
