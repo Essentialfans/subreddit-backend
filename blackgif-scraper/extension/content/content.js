@@ -29,7 +29,7 @@ function gifIdFromText(text) {
   const watch = String(text).match(/\/(?:watch|ifr)\/([A-Za-z0-9]+)/i)
   if (watch) return watch[1].toLowerCase()
   const cdn = String(text).match(
-    /(?:media|thumbs\d*|files)\.redgifs\.com\/([A-Za-z][A-Za-z0-9]+)(?:-mobile|-poster|-small|-large)?\.(?:mp4|webm|jpg|jpeg|png|webp|gif|m4s)/i,
+    /(?:media|thumbs\d*|files)\.redgifs\.com\/([A-Za-z][A-Za-z0-9]+)(?:-mobile|-poster|-small|-large)?(?:\.(?:mp4|webm|jpg|jpeg|png|webp|gif|m4s))?(?:\?|$)/i,
   )
   if (cdn) return cdn[1].toLowerCase()
   const api = String(text).match(/api\.redgifs\.com\/v2\/gifs\/([A-Za-z0-9]+)/i)
@@ -125,6 +125,10 @@ function watchLinkNear(el) {
 function detectFromDom() {
   const path = location.pathname.replace(/\/+$/, '')
 
+  // MAIN-world hook writes these attributes (isolated world can't see page performance entries)
+  const hookedGif = document.documentElement.getAttribute('data-bg-gif-id')
+  const hookedUser = document.documentElement.getAttribute('data-bg-username')
+
   const userMatch = path.match(/^\/users\/([^/?#]+)/i)
   if (userMatch) {
     return {
@@ -137,10 +141,11 @@ function detectFromDom() {
 
   const watchMatch = path.match(/^\/(?:watch|ifr)\/([^/?#]+)/i)
   let gifId = watchMatch ? decodeURIComponent(watchMatch[1]).toLowerCase() : null
-  let username = null
+  let username = hookedUser || null
 
   gifId =
     gifId ||
+    (hookedGif ? hookedGif.toLowerCase() : null) ||
     gifIdFromText(document.querySelector('link[rel="canonical"]')?.href) ||
     gifIdFromText(document.querySelector('meta[property="og:url"]')?.content) ||
     gifIdFromText(document.querySelector('meta[property="og:video"]')?.content) ||
@@ -148,7 +153,7 @@ function detectFromDom() {
 
   const video = findPlayingVideo()
   if (video) {
-    username = usernameNear(video)
+    username = username || usernameNear(video)
     gifId = gifId || watchLinkNear(video)
     for (const u of [video.currentSrc, video.src, video.poster]) {
       const id = gifIdFromText(u)
@@ -160,28 +165,21 @@ function detectFromDom() {
   }
 
   if (!gifId) {
-    // Prefer recent CDN hits (feed players often use blob: src)
-    try {
-      const resources = performance.getEntriesByType('resource').slice(-100).reverse()
-      for (const e of resources) {
-        const id = gifIdFromText(e.name)
-        if (id) {
-          gifId = id
-          break
-        }
-      }
-    } catch {
-      /* ignore */
-    }
-  }
-
-  if (!gifId) {
     for (const u of collectMediaUrls()) {
       const id = gifIdFromText(u)
       if (id) {
         gifId = id
         break
       }
+    }
+  }
+
+  // Last resort: scan visible markup near the player for CDN / watch urls
+  if (!gifId && video) {
+    let node = video.parentElement
+    for (let i = 0; i < 6 && node && !gifId; i++) {
+      gifId = gifIdFromText(node.innerHTML?.slice(0, 5000))
+      node = node.parentElement
     }
   }
 
@@ -295,15 +293,15 @@ async function refreshPanel() {
   const downloadBtn = panel.querySelector('#bg-download')
   const trackBtn = panel.querySelector('#bg-track')
 
-  downloadBtn.hidden = true
-  trackBtn.hidden = true
+  // Always show Download — never hide it
+  downloadBtn.hidden = false
+  trackBtn.hidden = !ctx.username
   downloadBtn.onclick = null
   trackBtn.onclick = null
   downloadBtn.disabled = false
   trackBtn.disabled = false
 
   if (ctx.username) {
-    trackBtn.hidden = false
     trackBtn.textContent = 'Track'
     trackBtn.onclick = async () => {
       trackBtn.disabled = true
@@ -320,13 +318,28 @@ async function refreshPanel() {
     }
   }
 
-  if (ctx.gifId && ctx.url) {
-    downloadBtn.hidden = false
-    downloadBtn.textContent = '…'
-    downloadBtn.disabled = true
-    setMeta(ctx.username ? `${ctx.gifId} · @${ctx.username}` : ctx.gifId)
+  const wireDownload = (url, gifId) => {
+    downloadBtn.disabled = false
+    downloadBtn.textContent = 'Download'
+    downloadBtn.onclick = async () => {
+      downloadBtn.disabled = true
+      downloadBtn.textContent = '…'
+      try {
+        const saved = await send('DOWNLOAD_URL', { url, saveFile: true })
+        const ok = saved.status === 'done'
+        setMeta(ok ? `Downloaded: ${saved.gif_id}` : `${saved.status}: ${saved.gif_id}`, ok ? 'ok' : 'err')
+        downloadBtn.textContent = ok ? 'Downloaded' : 'Retry'
+        downloadBtn.disabled = ok
+      } catch (err) {
+        setMeta(err.message, 'err')
+        downloadBtn.textContent = 'Download'
+        downloadBtn.disabled = false
+      }
+    }
+  }
 
-    // Check if already downloaded so we don't offer a duplicate save
+  if (ctx.gifId && ctx.url) {
+    setMeta(ctx.username ? `${ctx.gifId} · @${ctx.username}` : ctx.gifId)
     send('LOOKUP_GIF', { gifId: ctx.gifId })
       .then((item) => {
         if (item && item.status === 'done') {
@@ -338,52 +351,37 @@ async function refreshPanel() {
           )
           return
         }
-        downloadBtn.disabled = false
-        downloadBtn.textContent = 'Download'
-        downloadBtn.onclick = async () => {
-          downloadBtn.disabled = true
-          downloadBtn.textContent = '…'
-          try {
-            const saved = await send('DOWNLOAD_URL', { url: ctx.url, saveFile: true })
-            const ok = saved.status === 'done'
-            setMeta(ok ? `Downloaded: ${saved.gif_id}` : `${saved.status}: ${saved.gif_id}`, ok ? 'ok' : 'err')
-            downloadBtn.textContent = ok ? 'Downloaded' : 'Retry'
-            downloadBtn.disabled = ok
-          } catch (err) {
-            setMeta(err.message, 'err')
-            downloadBtn.textContent = 'Download'
-            downloadBtn.disabled = false
-          }
-        }
+        wireDownload(ctx.url, ctx.gifId)
       })
-      .catch(() => {
-        downloadBtn.disabled = false
-        downloadBtn.textContent = 'Download'
-        downloadBtn.onclick = async () => {
-          downloadBtn.disabled = true
-          downloadBtn.textContent = '…'
-          try {
-            const saved = await send('DOWNLOAD_URL', { url: ctx.url, saveFile: true })
-            const ok = saved.status === 'done'
-            setMeta(ok ? `Downloaded: ${saved.gif_id}` : `${saved.status}: ${saved.gif_id}`, ok ? 'ok' : 'err')
-            downloadBtn.textContent = ok ? 'Downloaded' : 'Retry'
-            downloadBtn.disabled = ok
-          } catch (err) {
-            setMeta(err.message, 'err')
-            downloadBtn.textContent = 'Download'
-            downloadBtn.disabled = false
-          }
-        }
-      })
+      .catch(() => wireDownload(ctx.url, ctx.gifId))
     return
+  }
+
+  // No gif id yet — still show Download; click asks for URL
+  downloadBtn.textContent = 'Download'
+  downloadBtn.onclick = async () => {
+    const pasted = window.prompt(
+      'Paste a RedGifs watch URL or gif id to download:',
+      'https://www.redgifs.com/watch/',
+    )
+    if (!pasted) return
+    const watch = pasted.match(/\/(?:watch|ifr)\/([A-Za-z0-9]+)/i)
+    const plain = /^[A-Za-z0-9]{4,80}$/.test(pasted.trim()) ? pasted.trim() : null
+    const gifId = (watch?.[1] || plain || '').toLowerCase()
+    if (!gifId) {
+      setMeta('Need a watch URL or gif id', 'err')
+      return
+    }
+    wireDownload(`https://www.redgifs.com/watch/${gifId}`, gifId)
+    downloadBtn.click()
   }
 
   if (ctx.username) {
-    setMeta(`@${ctx.username} — open watch tab or paste URL in popup`)
+    setMeta(`@${ctx.username} — tap Download (or wait for detect)`)
     return
   }
 
-  setMeta('Play a gif (or paste URL in popup)')
+  setMeta('Tap Download — or play gif to auto-detect')
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -410,7 +408,12 @@ const tick = () => {
 }
 
 const mo = new MutationObserver(() => tick())
-mo.observe(document.documentElement, { childList: true, subtree: true, attributes: true })
+mo.observe(document.documentElement, {
+  childList: true,
+  subtree: true,
+  attributes: true,
+  attributeFilter: ['data-bg-gif-id', 'data-bg-username', 'src', 'href', 'poster'],
+})
 window.addEventListener('popstate', tick)
-setInterval(tick, 600)
+setInterval(tick, 500)
 refreshPanel()

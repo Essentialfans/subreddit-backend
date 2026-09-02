@@ -33,6 +33,7 @@ const els = {
   minViews: document.getElementById('min-views'),
   toast: document.getElementById('toast'),
   offlineHelp: document.getElementById('offline-help'),
+  downloadHint: document.getElementById('download-hint'),
 }
 
 let pageCtx = null
@@ -96,6 +97,9 @@ function resetActionButtons() {
   els.saveFile.textContent = 'Download'
   els.add.textContent = 'Add to library'
   els.track.textContent = 'Track creator'
+  if (els.downloadHint) {
+    els.downloadHint.textContent = 'Saves the current gif to disk'
+  }
 }
 
 function markDownloadedUi(username, gifId) {
@@ -106,12 +110,14 @@ function markDownloadedUi(username, gifId) {
   els.pageLabel.textContent = username
     ? `Downloaded · @${username}`
     : `Downloaded · ${gifId}`
+  if (els.downloadHint) els.downloadHint.textContent = 'Already on disk — won’t download again'
 }
 
 function enableGifActions(ctx) {
   els.pageLabel.textContent = ctx.username
     ? `Gif ${ctx.gifId} · @${ctx.username}`
     : `Gif ${ctx.gifId}`
+  if (els.downloadHint) els.downloadHint.textContent = 'Ready — click Download to save the file'
   if (ctx.username) {
     els.track.disabled = false
     els.track.textContent = 'Track creator'
@@ -157,13 +163,19 @@ function applyPageContext(ctx) {
   }
 
   if (pageCtx.username) {
-    els.pageLabel.textContent = `@${pageCtx.username} playing — wait for gif id, or paste URL below`
+    els.pageLabel.textContent = `@${pageCtx.username} playing — paste watch URL below to Download`
     els.track.disabled = false
     els.track.textContent = 'Track creator'
+    if (els.downloadHint) {
+      els.downloadHint.textContent = 'Gif id not detected yet — paste URL below, then Download'
+    }
     return
   }
 
   els.pageLabel.textContent = 'Play a gif, wait a second, reopen — or paste watch URL'
+  if (els.downloadHint) {
+    els.downloadHint.textContent = 'Paste a watch URL below to download anytime'
+  }
 }
 
 async function loadSettings() {

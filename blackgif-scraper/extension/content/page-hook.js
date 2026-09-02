@@ -10,16 +10,27 @@
   const catalog = new Map()
 
   const emit = (payload) => {
+    try {
+      if (payload.gifId) {
+        document.documentElement.setAttribute('data-bg-gif-id', String(payload.gifId).toLowerCase())
+      }
+      if (payload.username) {
+        document.documentElement.setAttribute('data-bg-username', String(payload.username).toLowerCase())
+      }
+    } catch (_) {
+      /* ignore */
+    }
     window.postMessage({ source: 'blackgif-scraper', ...payload }, '*')
   }
 
+  // Also watch for hdUrl / sdUrl style paths without suffix filter
   const idFromUrl = (url) => {
     if (!url) return null
     const s = String(url)
     let m = s.match(/\/(?:watch|ifr)\/([A-Za-z0-9]+)/i)
     if (m) return m[1].toLowerCase()
     m = s.match(
-      /(?:media|thumbs\d*|files)\.redgifs\.com\/([A-Za-z][A-Za-z0-9]+)(?:-mobile|-poster|-small|-large)?\.(?:mp4|webm|jpg|jpeg|png|webp|gif|m4s)/i,
+      /(?:media|thumbs\d*|files)\.redgifs\.com\/([A-Za-z][A-Za-z0-9]+)(?:-mobile|-poster|-small|-large)?(?:\.(?:mp4|webm|jpg|jpeg|png|webp|gif|m4s))?(?:\?|$)/i,
     )
     if (m) return m[1].toLowerCase()
     m = s.match(/api\.redgifs\.com\/v2\/gifs\/([A-Za-z0-9]+)/i)
