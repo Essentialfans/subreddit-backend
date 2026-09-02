@@ -66,6 +66,9 @@ function MediaGrid({
               </div>
               <div className="space-y-2 p-4">
                 <h3 className="line-clamp-1 text-sm font-medium">{item.title || item.gif_id}</h3>
+                <p className="truncate font-mono text-[10px] text-[var(--color-muted)]" title={item.gif_id}>
+                  {item.gif_id}
+                </p>
                 <p className="text-xs text-[var(--color-muted)]">
                   {showCreator && creator ? (
                     <>

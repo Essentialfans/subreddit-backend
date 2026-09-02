@@ -86,7 +86,11 @@ function markDownloadedUi(username, gifId) {
   els.pageLabel.textContent = username
     ? `Downloaded · @${username}`
     : `Downloaded · ${gifId}`
-  if (els.downloadHint) els.downloadHint.textContent = 'Already on disk — won’t download again'
+  if (els.downloadHint) {
+    els.downloadHint.textContent = username
+      ? `On disk in Library → Downloaded (folder @${username})`
+      : 'Already on disk — open Library → Downloaded'
+  }
 }
 
 function enableGifActions(ctx) {
@@ -101,7 +105,14 @@ function enableGifActions(ctx) {
   send('LOOKUP_GIF', { gifId: ctx.gifId })
     .then((item) => {
       if (item?.status === 'done') {
-        markDownloadedUi(ctx.username, ctx.gifId)
+        // Prefer API owner/folder username — page overlay can show a different handle
+        const owner = item.username || ctx.username
+        if (item.username) pageCtx = { ...ctx, username: item.username }
+        markDownloadedUi(owner, ctx.gifId)
+        if (owner) {
+          els.track.disabled = false
+          els.track.textContent = 'Track creator'
+        }
       } else {
         els.saveFile.disabled = false
         els.saveFile.textContent = 'Download this gif'
@@ -361,8 +372,10 @@ els.saveFile.addEventListener('click', async () => {
   try {
     const item = await send('DOWNLOAD_URL', { url: pageCtx.url, saveFile: true })
     if (item.status === 'done') {
-      toast(`Downloaded ${item.gif_id}`)
-      markDownloadedUi(pageCtx.username, item.gif_id)
+      const owner = item.username || pageCtx.username
+      if (item.username) pageCtx = { ...pageCtx, username: item.username }
+      toast(`Saved @${owner || '?'} / ${item.gif_id}`)
+      markDownloadedUi(owner, item.gif_id)
     } else {
       toast(item.status || 'Download failed')
       els.saveFile.textContent = 'Download this gif'

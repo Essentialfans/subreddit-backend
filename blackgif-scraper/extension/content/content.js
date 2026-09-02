@@ -415,7 +415,13 @@ async function refreshPanel() {
         const saved = await send('DOWNLOAD_URL', { url, saveFile: true })
         if (token !== panelLookupToken) return
         const ok = saved.status === 'done'
-        setMeta(ok ? `Downloaded: ${saved.gif_id}` : `${saved.status}: ${saved.gif_id}`, ok ? 'ok' : 'err')
+        const owner = saved.username || ctx.username
+        setMeta(
+          ok
+            ? `Saved @${owner || '?'} / ${saved.gif_id}`
+            : `${saved.status}: ${saved.gif_id}`,
+          ok ? 'ok' : 'err',
+        )
         downloadBtn.textContent = ok ? 'Downloaded' : 'Retry'
         downloadBtn.disabled = ok
       } catch (err) {
@@ -438,12 +444,31 @@ async function refreshPanel() {
       .then((item) => {
         if (token !== panelLookupToken) return
         if (item && item.status === 'done') {
+          const owner = item.username || ctx.username
           downloadBtn.textContent = 'Downloaded'
           downloadBtn.disabled = true
           setMeta(
-            ctx.username ? `Downloaded · @${ctx.username}` : 'Already downloaded',
+            owner ? `On disk · @${owner}` : 'Already downloaded',
             'ok',
           )
+          if (owner && owner !== ctx.username) {
+            trackBtn.hidden = false
+            trackBtn.textContent = 'Track'
+            trackBtn.disabled = false
+            trackBtn.onclick = async () => {
+              trackBtn.disabled = true
+              trackBtn.textContent = '…'
+              try {
+                const acc = await send('TRACK_ACCOUNT', { username: owner })
+                setMeta(`Tracking @${acc.username}`, 'ok')
+                trackBtn.textContent = 'Tracked ✓'
+              } catch (err) {
+                setMeta(friendlyRuntimeError(err), 'err')
+                trackBtn.textContent = 'Track'
+                trackBtn.disabled = false
+              }
+            }
+          }
           return
         }
         wireDownload(ctx.url, ctx.gifId)
