@@ -77,14 +77,14 @@ async function api(path, options = {}) {
     }
   }
   throw new Error(
-    'API not running — in Terminal: cd ~/subreddit-backend/blackgif-scraper && ./install-autostart-mac.sh',
+    'API not running — in Terminal: cd ~/subreddit-backend && ./fix-blackgif.sh',
   )
 }
 
 function friendlyErr(err) {
   const raw = err?.message || String(err || '')
   if (/failed to fetch|networkerror|abort/i.test(raw)) {
-    return 'API not running — cd ~/subreddit-backend/blackgif-scraper && ./install-autostart-mac.sh'
+    return 'API not running — cd ~/subreddit-backend && ./fix-blackgif.sh'
   }
   return raw || 'API unreachable'
 }
@@ -124,7 +124,7 @@ async function refreshBadge() {
     await chrome.action.setBadgeText({ text: '!' })
     await chrome.action.setBadgeBackgroundColor({ color: '#f87171' })
     await chrome.action.setTitle({
-      title: 'BlackGif Offline — run ./install-autostart-mac.sh in blackgif-scraper',
+      title: 'BlackGif Offline — run ./fix-blackgif.sh in ~/subreddit-backend',
     })
   }
 }
@@ -169,7 +169,7 @@ async function handleMessage(message) {
           lastOnline: false,
           lastHealthAt: Date.now(),
           lastHealthError: err?.message || String(err),
-          hint: 'Start API: cd blackgif-scraper && ./install-autostart-mac.sh',
+          hint: 'Start API: cd ~/subreddit-backend && ./fix-blackgif.sh',
         }
       }
     }

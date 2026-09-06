@@ -3,6 +3,7 @@ uvicorn[standard]==0.34.0
 sqlalchemy==2.0.36
 pydantic==2.10.4
 pydantic-settings==2.7.0
+# pydantic-settings is required (imported by app.config)
 httpx==0.28.1
 yt-dlp==2024.12.23
 apscheduler==3.10.4

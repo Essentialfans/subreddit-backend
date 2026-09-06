@@ -53,7 +53,7 @@ function setOnline(online, errMsg) {
     els.offlineHelp.hidden = online
     if (!online && errMsg) {
       els.offlineHelp.innerHTML =
-        `Offline: ${escapeHtml(errMsg)}<br/>In Terminal run:<br/><code>cd ~/subreddit-backend/blackgif-scraper && ./install-autostart-mac.sh</code><br/>then click Refresh.`
+        `Offline: ${escapeHtml(errMsg)}<br/>In Terminal run:<br/><code>cd ~/subreddit-backend && ./fix-blackgif.sh</code><br/>then click Refresh.`
     }
   }
 }
