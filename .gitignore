@@ -1,2 +1,5 @@
 credentials.json
-credentials.json
+blackgif-scraper/backend/.venv/
+blackgif-scraper/frontend/node_modules/
+blackgif-scraper/frontend/dist/
+blackgif-scraper/data/
