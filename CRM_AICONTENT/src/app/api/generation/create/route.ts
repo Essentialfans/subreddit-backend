@@ -61,12 +61,31 @@ export async function POST(request: Request) {
     }
 
     const apiKey = await loadKieApiKey(userId);
+    const allowedDurations = model.durations ?? [];
+    const requestedDuration = body.duration ?? model.defaultDuration;
+    const duration =
+      typeof requestedDuration === "number" &&
+      allowedDurations.length > 0 &&
+      !allowedDurations.includes(requestedDuration)
+        ? model.defaultDuration ?? allowedDurations[0]
+        : requestedDuration;
+
+    const allowedResolutions = model.resolutions ?? [];
+    const requestedResolution =
+      body.resolution ?? model.defaultResolution ?? null;
+    const resolution =
+      requestedResolution &&
+      allowedResolutions.length > 0 &&
+      !allowedResolutions.includes(requestedResolution)
+        ? model.defaultResolution ?? allowedResolutions[0]
+        : requestedResolution;
+
     const payload = buildKieInput({
       model,
       prompt,
       aspect: body.aspect || model.defaultAspect,
-      duration: body.duration ?? model.defaultDuration,
-      resolution: body.resolution,
+      duration,
+      resolution,
       imageUrls,
       audioUrl: body.audioUrl,
     });

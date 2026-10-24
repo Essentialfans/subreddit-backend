@@ -1,10 +1,15 @@
 export type GenerationMode = "image" | "video";
 
+export type VideoCategory = "prompting" | "motion_control";
+
 export type ImageRefField =
   | "image_url"
   | "image_urls"
   | "reference_image_urls"
   | "input_urls";
+
+/** How resolution is sent to kie.ai for this model */
+export type ResolutionField = "resolution" | "quality" | "mode";
 
 export interface KieModel {
   id: string;
@@ -20,11 +25,62 @@ export interface KieModel {
   aspectOptions: string[];
   defaultAspect: string;
   /** Video-only extras */
+  videoCategory?: VideoCategory;
+  /** Allowed clip lengths in seconds (from kie.ai docs). Empty = driven by audio/input. */
   durations?: number[];
   defaultDuration?: number;
+  /** Allowed output resolutions for this model (display form, e.g. 720p) */
+  resolutions?: string[];
+  defaultResolution?: string;
+  /** API field name for resolution */
+  resolutionField?: ResolutionField;
+  /** Some APIs want 720P / 1080P instead of 720p */
+  resolutionCase?: "lower" | "upper";
+  /** Some APIs expect duration as a string */
+  durationAsString?: boolean;
   requiresImage?: boolean;
   requiresAudio?: boolean;
+  /** Extra note shown under duration when special */
+  durationNote?: string;
 }
+
+/** Inclusive integer seconds list for UI selectors */
+export function secRange(min: number, max: number): number[] {
+  const out: number[] = [];
+  for (let s = min; s <= max; s += 1) out.push(s);
+  return out;
+}
+
+export function formatResolutionForApi(
+  value: string,
+  model: KieModel
+): string {
+  // MiniMax H3 API: 768P / 1080P (UI shows nearest 720p / 1080p)
+  if (model.id === "minimax-h3") {
+    const v = value.toLowerCase();
+    if (v === "720p" || v === "480p") return "768P";
+    if (v === "1080p") return "1080P";
+  }
+  // PixVerse quality enum is lowercase; 480p maps to nearest 540p
+  if (model.resolutionField === "quality") {
+    const v = value.toLowerCase();
+    if (v === "480p") return "540p";
+    return v;
+  }
+  if (model.resolutionCase === "upper") {
+    return value.toUpperCase();
+  }
+  return value.toLowerCase();
+}
+
+export function videoModelsByCategory(category: VideoCategory): KieModel[] {
+  return VIDEO_MODELS.filter((m) => m.videoCategory === category);
+}
+
+export const VIDEO_CATEGORY_LABELS: Record<VideoCategory, string> = {
+  prompting: "Prompting video",
+  motion_control: "Motion control",
+};
 
 export const IMAGE_MODELS: KieModel[] = [
   {
@@ -112,35 +168,45 @@ export const IMAGE_MODELS: KieModel[] = [
 ];
 
 export const VIDEO_MODELS: KieModel[] = [
+  // —— Prompting video ——
   {
     id: "seedance-2-5",
     label: "Seedance 2.5",
     mode: "video",
+    videoCategory: "prompting",
     model: "bytedance/seedance-2-5",
     imageRefModel: "bytedance/seedance-2-5",
     imageRefField: "reference_image_urls",
-    blurb: "ByteDance motion — smooth camera and subject move.",
+    blurb: "ByteDance — smooth camera and subject move.",
     aspectOptions: ["9:16", "16:9", "1:1"],
     defaultAspect: "9:16",
-    durations: [5, 10],
+    durations: secRange(4, 30),
     defaultDuration: 5,
+    resolutions: ["480p", "720p", "1080p"],
+    defaultResolution: "720p",
+    resolutionField: "resolution",
   },
   {
     id: "seedance-2-0",
     label: "Seedance 2.0",
     mode: "video",
+    videoCategory: "prompting",
     model: "bytedance/seedance-2",
     imageRefField: "reference_image_urls",
     blurb: "Stable Seedance baseline for social clips.",
     aspectOptions: ["9:16", "16:9", "1:1"],
     defaultAspect: "9:16",
-    durations: [5, 10],
+    durations: secRange(4, 15),
     defaultDuration: 5,
+    resolutions: ["480p", "720p", "1080p"],
+    defaultResolution: "720p",
+    resolutionField: "resolution",
   },
   {
     id: "kling-4-0",
     label: "Kling 4.0",
     mode: "video",
+    videoCategory: "prompting",
     model: "kling-4.0/reference-to-video",
     imageRefModel: "kling-4.0/reference-to-video",
     imageRefField: "image_urls",
@@ -148,171 +214,237 @@ export const VIDEO_MODELS: KieModel[] = [
     blurb: "Newest Kling — reference-driven cinematic motion.",
     aspectOptions: ["9:16", "16:9", "1:1"],
     defaultAspect: "9:16",
-    durations: [5, 10],
-    defaultDuration: 5,
+    durations: secRange(3, 30),
+    defaultDuration: 10,
+    resolutions: ["720p", "1080p"],
+    defaultResolution: "720p",
+    resolutionField: "resolution",
   },
   {
     id: "grok-imagine-video",
     label: "Grok Imagine Video 1.5",
     mode: "video",
+    videoCategory: "prompting",
     model: "grok-imagine/text-to-video",
     imageRefModel: "grok-imagine/image-to-video",
     imageRefField: "image_url",
     blurb: "Text or still → video with synced audio bed.",
     aspectOptions: ["9:16", "16:9", "1:1"],
     defaultAspect: "9:16",
-    durations: [6, 10],
+    durations: secRange(6, 30),
     defaultDuration: 6,
+    resolutions: ["480p", "720p", "1080p"],
+    defaultResolution: "720p",
+    resolutionField: "resolution",
+    durationAsString: true,
   },
   {
     id: "kling-3-0",
     label: "Kling 3.0",
     mode: "video",
+    videoCategory: "prompting",
     model: "kling-3.0/video",
     imageRefField: "image_urls",
     blurb: "Multi-shot Kling with strong subject hold.",
     aspectOptions: ["9:16", "16:9", "1:1"],
     defaultAspect: "9:16",
-    durations: [5, 10],
+    durations: secRange(3, 15),
     defaultDuration: 5,
+    resolutions: ["720p", "1080p"],
+    defaultResolution: "720p",
+    resolutionField: "resolution",
   },
   {
     id: "kling-3-turbo",
     label: "Kling 3.0 Turbo",
     mode: "video",
+    videoCategory: "prompting",
     model: "kling/v3-turbo-text-to-video",
     imageRefModel: "kling/v3-turbo-image-to-video",
     imageRefField: "image_url",
     blurb: "Faster Kling pass when you’re iterating.",
     aspectOptions: ["9:16", "16:9", "1:1"],
     defaultAspect: "9:16",
-    durations: [5, 10],
+    durations: secRange(3, 15),
     defaultDuration: 5,
-  },
-  {
-    id: "kling-3-motion",
-    label: "Kling 3.0 Motion Control",
-    mode: "video",
-    model: "kling-3.0/motion-control",
-    imageRefField: "image_url",
-    blurb: "Guide motion from a still — performance control.",
-    aspectOptions: ["9:16", "16:9", "1:1"],
-    defaultAspect: "9:16",
-    durations: [5, 10],
-    defaultDuration: 5,
-    requiresImage: true,
+    resolutions: ["720p", "1080p"],
+    defaultResolution: "720p",
+    resolutionField: "resolution",
+    durationAsString: true,
   },
   {
     id: "wan-3-0",
     label: "Wan 3.0",
     mode: "video",
+    videoCategory: "prompting",
     model: "wan/3-0-video",
     imageRefField: "image_url",
-    blurb: "Wan’s latest general video model.",
-    aspectOptions: ["9:16", "16:9", "1:1"],
+    blurb: "Wan’s latest general video model (up to 30s).",
+    aspectOptions: ["9:16", "16:9", "1:1", "4:3", "3:4"],
     defaultAspect: "9:16",
-    durations: [5, 10],
+    durations: secRange(2, 30),
     defaultDuration: 5,
+    resolutions: ["480p", "720p", "1080p"],
+    defaultResolution: "1080p",
+    resolutionField: "resolution",
+    resolutionCase: "upper",
   },
   {
     id: "wan-3-prime",
     label: "Wan 3.0 Prime",
     mode: "video",
+    videoCategory: "prompting",
     model: "wan/3-0-video-prime",
     imageRefField: "image_url",
-    blurb: "Higher-speed Wan for quick cutdowns.",
-    aspectOptions: ["9:16", "16:9", "1:1"],
+    blurb: "Higher-speed Wan for quick cutdowns (up to 30s).",
+    aspectOptions: ["9:16", "16:9", "1:1", "4:3", "3:4"],
     defaultAspect: "9:16",
-    durations: [5, 10],
+    durations: secRange(2, 30),
     defaultDuration: 5,
+    resolutions: ["480p", "720p", "1080p"],
+    defaultResolution: "1080p",
+    resolutionField: "resolution",
+    resolutionCase: "upper",
   },
   {
     id: "gemini-omni-flash",
     label: "Gemini Omni 1.1 Flash",
     mode: "video",
+    videoCategory: "prompting",
     model: "google/gemini-omni-flash-1-1",
     imageRefField: "image_urls",
     blurb: "Multimodal Google flash video generation.",
     aspectOptions: ["9:16", "16:9", "1:1"],
     defaultAspect: "9:16",
-    durations: [5, 8],
-    defaultDuration: 5,
+    durations: [4, 6, 8, 10],
+    defaultDuration: 6,
+    resolutions: ["720p", "1080p"],
+    defaultResolution: "720p",
+    resolutionField: "resolution",
+    durationAsString: true,
   },
   {
     id: "minimax-h3",
     label: "MiniMax H3",
     mode: "video",
+    videoCategory: "prompting",
     model: "minimax-h3/text-to-video",
     imageRefModel: "minimax-h3/image-to-video",
     imageRefField: "image_url",
     blurb: "Cinematic clips with native stereo audio.",
-    aspectOptions: ["9:16", "16:9", "1:1"],
+    aspectOptions: ["9:16", "16:9", "1:1", "4:3", "3:4"],
     defaultAspect: "9:16",
-    durations: [6, 10],
+    durations: secRange(4, 15),
     defaultDuration: 6,
+    // API uses 768P / 2K — surface closest UI labels
+    resolutions: ["720p", "1080p"],
+    defaultResolution: "1080p",
+    resolutionField: "resolution",
   },
   {
     id: "happyhorse-1-1",
     label: "HappyHorse 1.1",
     mode: "video",
+    videoCategory: "prompting",
     model: "happyhorse-1-1/text-to-video",
     imageRefModel: "happyhorse-1-1/image-to-video",
     imageRefField: "image_url",
     blurb: "Snappy social motion with punchy lighting.",
     aspectOptions: ["9:16", "16:9", "1:1"],
     defaultAspect: "9:16",
-    durations: [5, 10],
+    durations: secRange(3, 15),
     defaultDuration: 5,
+    resolutions: ["720p", "1080p"],
+    defaultResolution: "1080p",
+    resolutionField: "resolution",
   },
   {
     id: "veo-3-1",
     label: "Veo 3.1",
     mode: "video",
+    videoCategory: "prompting",
     model: "veo-3-1",
     imageRefField: "image_urls",
     blurb: "Google Veo — quality / fast / lite via kie.ai.",
     aspectOptions: ["9:16", "16:9"],
     defaultAspect: "9:16",
-    durations: [6, 8],
-    defaultDuration: 6,
-  },
-  {
-    id: "omnihuman-2-0",
-    label: "OmniHuman 2.0",
-    mode: "video",
-    model: "omnihuman-2-0",
-    imageRefField: "image_url",
-    blurb: "Talking-character video from image + audio.",
-    aspectOptions: ["9:16", "16:9", "1:1"],
-    defaultAspect: "9:16",
-    requiresImage: true,
-    requiresAudio: true,
+    durations: [4, 6, 8],
+    defaultDuration: 8,
+    resolutions: ["720p", "1080p"],
+    defaultResolution: "720p",
+    resolutionField: "resolution",
   },
   {
     id: "vidu-q4",
     label: "Vidu Q4",
     mode: "video",
+    videoCategory: "prompting",
     model: "vidu-q4/image-to-video",
     imageRefField: "image_url",
     blurb: "Image-to-video specialist for still → motion.",
     aspectOptions: ["9:16", "16:9", "1:1"],
     defaultAspect: "9:16",
-    durations: [5, 8],
+    durations: secRange(3, 16),
     defaultDuration: 5,
+    resolutions: ["720p", "1080p"],
+    defaultResolution: "720p",
+    resolutionField: "resolution",
     requiresImage: true,
   },
   {
     id: "pixverse-v6-max",
     label: "PixVerse V6 Max",
     mode: "video",
+    videoCategory: "prompting",
     model: "pixverse-v6-max/text-to-video",
     imageRefModel: "pixverse-v6-max/image-to-video",
     imageRefField: "image_url",
     blurb: "Up to 15s cinematic clips, optional native audio.",
     aspectOptions: ["9:16", "16:9", "1:1"],
     defaultAspect: "9:16",
-    durations: [5, 8, 10, 15],
+    durations: secRange(1, 15),
     defaultDuration: 5,
+    resolutions: ["480p", "720p", "1080p"],
+    defaultResolution: "720p",
+    resolutionField: "quality",
+  },
+  // —— Motion control ——
+  {
+    id: "kling-3-motion",
+    label: "Kling 3.0 Motion Control",
+    mode: "video",
+    videoCategory: "motion_control",
+    model: "kling-3.0/motion-control",
+    imageRefField: "image_url",
+    blurb: "Drive character motion from a still + motion reference.",
+    aspectOptions: ["9:16", "16:9", "1:1"],
+    defaultAspect: "9:16",
+    durations: secRange(3, 30),
+    defaultDuration: 5,
+    resolutions: ["720p", "1080p"],
+    defaultResolution: "720p",
+    // Docs send output size via `mode`: 720p | 1080p
+    resolutionField: "mode",
+    requiresImage: true,
+    durationNote: "Motion clip length follows your motion reference (3–30s).",
+  },
+  {
+    id: "omnihuman-2-0",
+    label: "OmniHuman 2.0",
+    mode: "video",
+    videoCategory: "motion_control",
+    model: "omnihuman-2-0",
+    imageRefField: "image_url",
+    blurb: "Talking-character performance from image + audio.",
+    aspectOptions: ["9:16", "16:9", "1:1"],
+    defaultAspect: "9:16",
+    durations: [],
+    resolutions: ["720p", "1080p"],
+    defaultResolution: "720p",
+    resolutionField: "resolution",
+    requiresImage: true,
+    requiresAudio: true,
+    durationNote: "Length follows the audio (about 4–300s).",
   },
 ];
 
@@ -362,15 +494,29 @@ export function buildKieInput(options: {
   }
 
   if (resolution) {
-    input.resolution = resolution;
-    // Some image models use image_size / quality naming
     if (def.mode === "image") {
+      input.resolution = resolution;
       input.image_size = resolution.toLowerCase();
+    } else {
+      const field = def.resolutionField ?? "resolution";
+      const apiRes = formatResolutionForApi(resolution, def);
+      if (field === "quality") {
+        input.quality = apiRes;
+      } else if (field === "mode") {
+        input.mode = apiRes;
+      } else {
+        input.resolution = apiRes;
+      }
     }
   }
 
-  if (def.mode === "video" && duration) {
-    input.duration = duration;
+  if (
+    def.mode === "video" &&
+    typeof duration === "number" &&
+    duration > 0 &&
+    (def.durations?.length ?? 0) > 0
+  ) {
+    input.duration = def.durationAsString ? String(duration) : duration;
   }
 
   if (hasImage && primary && def.id !== "veo-3-1") {

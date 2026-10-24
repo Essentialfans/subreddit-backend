@@ -15,7 +15,11 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { VIDEO_MODELS } from "@/lib/kie/models";
+import {
+  VIDEO_CATEGORY_LABELS,
+  videoModelsByCategory,
+  type VideoCategory,
+} from "@/lib/kie/models";
 import type { CreatorModel } from "@/lib/models/types";
 import { RATIO_OPTIONS } from "@/lib/generation/presets";
 import "./generate-dock.css";
@@ -25,6 +29,8 @@ type Slot =
   | { state: "generating" }
   | { state: "done"; url: string }
   | { state: "error"; message: string };
+
+type OpenMenu = null | "model" | "gen" | "ratio" | "duration" | "resolution";
 
 function RatioIcon({ id }: { id: string }) {
   if (id === "1:1") return <Square className="h-3.5 w-3.5" />;
@@ -46,17 +52,26 @@ export function VideoDock({
   );
   const creator = creatorModels.find((m) => m.id === creatorId) ?? null;
 
+  const [category, setCategory] = useState<VideoCategory>("prompting");
+  const categoryModels = useMemo(
+    () => videoModelsByCategory(category),
+    [category]
+  );
+
   const [videoModelId, setVideoModelId] = useState(
-    VIDEO_MODELS.find((m) => m.id === "kling-4-0")?.id ??
-      VIDEO_MODELS[0]?.id ??
+    () =>
+      videoModelsByCategory("prompting").find((m) => m.id === "kling-4-0")
+        ?.id ??
+      videoModelsByCategory("prompting")[0]?.id ??
       ""
   );
   const videoModel =
-    VIDEO_MODELS.find((m) => m.id === videoModelId) ?? VIDEO_MODELS[0];
+    categoryModels.find((m) => m.id === videoModelId) ?? categoryModels[0];
 
   const [prompt, setPrompt] = useState("");
   const [ratio, setRatio] = useState("9:16");
   const [duration, setDuration] = useState(5);
+  const [resolution, setResolution] = useState("720p");
   const [referenceUrl, setReferenceUrl] = useState(initialImageUrl ?? "");
   const [audioUrl, setAudioUrl] = useState("");
   const [enhance, setEnhance] = useState(true);
@@ -67,9 +82,7 @@ export function VideoDock({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [keyReady, setKeyReady] = useState<boolean | null>(null);
-  const [openMenu, setOpenMenu] = useState<null | "model" | "gen" | "ratio">(
-    null
-  );
+  const [openMenu, setOpenMenu] = useState<OpenMenu>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const loadModels = useCallback(async () => {
@@ -98,9 +111,35 @@ export function VideoDock({
     if (initialImageUrl) setReferenceUrl(initialImageUrl);
   }, [initialImageUrl]);
 
+  // Keep selected model inside the active category
   useEffect(() => {
-    if (videoModel?.defaultDuration) setDuration(videoModel.defaultDuration);
-    if (videoModel?.defaultAspect) setRatio(videoModel.defaultAspect);
+    if (!categoryModels.some((m) => m.id === videoModelId)) {
+      setVideoModelId(categoryModels[0]?.id ?? "");
+    }
+  }, [category, categoryModels, videoModelId]);
+
+  // Sync duration / ratio / resolution to what the chosen model allows
+  useEffect(() => {
+    if (!videoModel) return;
+    if (videoModel.defaultAspect) setRatio(videoModel.defaultAspect);
+
+    const durations = videoModel.durations ?? [];
+    if (durations.length > 0) {
+      setDuration((prev) =>
+        durations.includes(prev)
+          ? prev
+          : (videoModel.defaultDuration ?? durations[0])
+      );
+    }
+
+    const resolutions = videoModel.resolutions ?? [];
+    if (resolutions.length > 0) {
+      setResolution((prev) =>
+        resolutions.includes(prev)
+          ? prev
+          : (videoModel.defaultResolution ?? resolutions[0])
+      );
+    }
   }, [videoModel?.id]);
 
   useEffect(() => {
@@ -112,9 +151,15 @@ export function VideoDock({
   }, []);
 
   const durationOptions = useMemo(
-    () => videoModel?.durations ?? [5, 10],
+    () => videoModel?.durations ?? [],
     [videoModel]
   );
+  const resolutionOptions = useMemo(
+    () => videoModel?.resolutions ?? [],
+    [videoModel]
+  );
+  const showDuration = durationOptions.length > 0;
+  const showResolution = resolutionOptions.length > 0;
 
   async function uploadPublicFile(file: File): Promise<string> {
     const form = new FormData();
@@ -200,7 +245,8 @@ export function VideoDock({
           modelId: videoModel.id,
           prompt: finalPrompt,
           aspect: ratio,
-          duration,
+          duration: showDuration ? duration : undefined,
+          resolution: showResolution ? resolution : undefined,
           imageUrls,
           audioUrl: audioUrl.trim() || null,
         }),
@@ -229,7 +275,10 @@ export function VideoDock({
     <div className="gen-dock-page">
       <div
         className="gen-dock-stage"
-        style={{ gridTemplateColumns: "minmax(0,1.4fr) minmax(0,1fr) minmax(200px,0.7fr)" }}
+        style={{
+          gridTemplateColumns:
+            "minmax(0,1.4fr) minmax(0,1fr) minmax(200px,0.7fr)",
+        }}
       >
         {slots.map((slot, i) => (
           <div key={i} className="gen-dock-cell">
@@ -297,6 +346,31 @@ export function VideoDock({
       </div>
 
       <div className="gen-dock-panel" ref={menuRef}>
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="gen-mode-tabs" role="tablist" aria-label="Video type">
+            {(
+              Object.keys(VIDEO_CATEGORY_LABELS) as VideoCategory[]
+            ).map((id) => (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                aria-selected={category === id}
+                data-active={category === id}
+                onClick={() => {
+                  setCategory(id);
+                  setOpenMenu(null);
+                }}
+              >
+                {VIDEO_CATEGORY_LABELS[id]}
+              </button>
+            ))}
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            Models and limits match what each API supports
+          </p>
+        </div>
+
         <div className="flex flex-wrap items-end gap-4">
           <div className="relative space-y-1">
             <p className="gen-label">Identity</p>
@@ -367,7 +441,7 @@ export function VideoDock({
             </button>
             {openMenu === "gen" ? (
               <div className="gen-menu left-0 bottom-auto top-[calc(100%+6px)] max-h-72">
-                {VIDEO_MODELS.map((m) => (
+                {categoryModels.map((m) => (
                   <button
                     key={m.id}
                     type="button"
@@ -388,6 +462,12 @@ export function VideoDock({
                       </span>
                       <span className="block text-[10px] text-muted-foreground">
                         {m.blurb}
+                        {m.durations && m.durations.length > 0
+                          ? ` · ${m.durations[0]}–${m.durations[m.durations.length - 1]}s`
+                          : ""}
+                        {m.resolutions && m.resolutions.length > 0
+                          ? ` · ${m.resolutions.join(" / ")}`
+                          : ""}
                       </span>
                     </span>
                     {m.id === videoModelId ? (
@@ -504,26 +584,102 @@ export function VideoDock({
             ) : null}
           </div>
 
-          <div className="space-y-1">
-            <p className="gen-label">Duration</p>
-            <div className="flex rounded-full border border-border bg-muted p-0.5">
-              {durationOptions.map((d) => (
-                <button
-                  key={d}
-                  type="button"
-                  onClick={() => setDuration(d)}
-                  className={cn(
-                    "rounded-full px-3 py-1.5 text-xs font-medium",
-                    duration === d
-                      ? "bg-primary/20 text-primary"
-                      : "text-muted-foreground"
-                  )}
-                >
-                  {d}s
-                </button>
-              ))}
+          {showDuration ? (
+            <div className="relative space-y-1">
+              <p className="gen-label">Duration</p>
+              {durationOptions.length <= 6 ? (
+                <div className="flex rounded-full border border-border bg-muted p-0.5">
+                  {durationOptions.map((d) => (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => setDuration(d)}
+                      className={cn(
+                        "rounded-full px-3 py-1.5 text-xs font-medium",
+                        duration === d
+                          ? "bg-primary/20 text-primary"
+                          : "text-muted-foreground"
+                      )}
+                    >
+                      {d}s
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className="gen-chip"
+                    data-active={openMenu === "duration"}
+                    onClick={() =>
+                      setOpenMenu((m) =>
+                        m === "duration" ? null : "duration"
+                      )
+                    }
+                  >
+                    {duration}s
+                    <ChevronDown className="h-3.5 w-3.5 opacity-60" />
+                  </button>
+                  {openMenu === "duration" ? (
+                    <div className="gen-menu left-0 bottom-[calc(100%+6px)] max-h-56">
+                      {durationOptions.map((d) => (
+                        <button
+                          key={d}
+                          type="button"
+                          data-active={d === duration}
+                          onClick={() => {
+                            setDuration(d);
+                            setOpenMenu(null);
+                          }}
+                        >
+                          {d} seconds
+                          {d === duration ? (
+                            <Check className="ml-auto h-3.5 w-3.5" />
+                          ) : null}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </>
+              )}
             </div>
-          </div>
+          ) : videoModel?.durationNote ? (
+            <div className="space-y-1">
+              <p className="gen-label">Duration</p>
+              <p className="max-w-[220px] text-xs text-muted-foreground">
+                {videoModel.durationNote}
+              </p>
+            </div>
+          ) : null}
+
+          {showResolution ? (
+            <div className="relative space-y-1">
+              <p className="gen-label">Resolution</p>
+              <div className="flex rounded-full border border-border bg-muted p-0.5">
+                {resolutionOptions.map((r) => (
+                  <button
+                    key={r}
+                    type="button"
+                    onClick={() => setResolution(r)}
+                    className={cn(
+                      "rounded-full px-3 py-1.5 text-xs font-medium",
+                      resolution === r
+                        ? "bg-primary/20 text-primary"
+                        : "text-muted-foreground"
+                    )}
+                  >
+                    {r}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {showDuration && videoModel?.durationNote ? (
+            <p className="w-full text-[11px] text-muted-foreground">
+              {videoModel.durationNote}
+            </p>
+          ) : null}
 
           <div className="ml-auto">
             <button
@@ -553,7 +709,8 @@ export function VideoDock({
         ) : null}
         {initialImageUrl ? (
           <p className="text-xs text-accent-green">
-            Still received from Image Generation — pick a video model and generate.
+            Still received from Image Generation — pick a video model and
+            generate.
           </p>
         ) : null}
       </div>

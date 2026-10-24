@@ -155,6 +155,29 @@
   transform: translateX(16px);
 }
 
+.gen-mode-tabs {
+  display: inline-flex;
+  gap: 0.25rem;
+  padding: 0.2rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--muted);
+}
+
+.gen-mode-tabs button {
+  border-radius: 999px;
+  padding: 0.45rem 0.95rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--muted-foreground);
+  transition: background 0.15s, color 0.15s;
+}
+
+.gen-mode-tabs button[data-active="true"] {
+  background: color-mix(in oklab, var(--primary) 20%, transparent);
+  color: var(--primary);
+}
+
 .gen-cat-rail {
   display: flex;
   gap: 0.55rem;
