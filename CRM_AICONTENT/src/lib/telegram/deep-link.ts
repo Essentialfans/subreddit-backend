@@ -103,9 +103,8 @@ async function persistCode(entry: TelegramPendingCode) {
   }
 
   // Optional mirror into SQL table if it exists (ignore failures).
-  await admin
-    .from("telegram_auth_codes")
-    .upsert({
+  try {
+    await admin.from("telegram_auth_codes").upsert({
       code: entry.code,
       mode: entry.mode,
       user_id: entry.userId,
@@ -122,9 +121,10 @@ async function persistCode(entry: TelegramPendingCode) {
       consumed_at: entry.consumedAt
         ? new Date(entry.consumedAt).toISOString()
         : null,
-    })
-    .then(() => undefined)
-    .catch(() => undefined);
+    });
+  } catch {
+    // Table may be missing or RLS may block — Storage is the source of truth.
+  }
 }
 
 async function loadCodeFromStorage(
