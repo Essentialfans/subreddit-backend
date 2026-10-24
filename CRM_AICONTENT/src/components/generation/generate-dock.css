@@ -134,12 +134,10 @@
   overflow: auto;
   border-radius: 12px;
   border: 1px solid var(--border);
-  /* Fully opaque so dock rows never bleed through */
-  background: var(--card);
-  background-color: color-mix(in oklab, var(--card) 100%, #0a0a0f);
+  /* Solid surface — sibling dock rows must never show through */
+  background-color: var(--card);
   padding: 0.35rem;
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
-  backdrop-filter: none;
 }
 
 /* Bottom-dock menus open upward into the stage, never into sibling rows */
