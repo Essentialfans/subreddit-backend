@@ -36,6 +36,8 @@ export type TelegramUpdate = {
   };
 };
 
+const CODES_BUCKET = "telegram-auth-codes";
+
 type GlobalTelegramState = {
   codes: Map<string, TelegramPendingCode>;
 };
@@ -67,50 +69,79 @@ export function getBotUsername() {
   return username.replace(/^@/, "");
 }
 
-function rowToEntry(row: Record<string, unknown>): TelegramPendingCode {
-  return {
-    code: String(row.code),
-    mode: row.mode as TelegramAuthMode,
-    userId: (row.user_id as string | null) ?? null,
-    status: row.status as TelegramCodeStatus,
-    telegramId: (row.telegram_id as number | null) ?? null,
-    telegramUsername: (row.telegram_username as string | null) ?? null,
-    telegramFirstName: (row.telegram_first_name as string | null) ?? null,
-    telegramPhotoUrl: (row.telegram_photo_url as string | null) ?? null,
-    createdAt: new Date(String(row.created_at)).getTime(),
-    expiresAt: new Date(String(row.expires_at)).getTime(),
-    claimedAt: row.claimed_at
-      ? new Date(String(row.claimed_at)).getTime()
-      : null,
-    consumedAt: row.consumed_at
-      ? new Date(String(row.consumed_at)).getTime()
-      : null,
-  };
+function objectPath(code: string) {
+  return `${code}.json`;
 }
 
 async function persistCode(entry: TelegramPendingCode) {
   const admin = createAdminClient();
-  const { error } = await admin.from("telegram_auth_codes").upsert({
-    code: entry.code,
-    mode: entry.mode,
-    user_id: entry.userId,
-    telegram_id: entry.telegramId,
-    telegram_username: entry.telegramUsername,
-    telegram_first_name: entry.telegramFirstName,
-    telegram_photo_url: entry.telegramPhotoUrl,
-    status: entry.status,
-    created_at: new Date(entry.createdAt).toISOString(),
-    expires_at: new Date(entry.expiresAt).toISOString(),
-    claimed_at: entry.claimedAt
-      ? new Date(entry.claimedAt).toISOString()
-      : null,
-    consumed_at: entry.consumedAt
-      ? new Date(entry.consumedAt).toISOString()
-      : null,
-  });
-  if (error) {
-    throw error;
+  const body = JSON.stringify(entry);
+  const path = objectPath(entry.code);
+
+  // Durable store: private Storage object (works without SQL table).
+  const { error: uploadError } = await admin.storage
+    .from(CODES_BUCKET)
+    .upload(path, body, {
+      contentType: "application/json",
+      upsert: true,
+    });
+
+  if (uploadError) {
+    // Ensure bucket exists, then retry once.
+    await admin.storage.createBucket(CODES_BUCKET, { public: false }).catch(
+      () => undefined
+    );
+    const { error: retryError } = await admin.storage
+      .from(CODES_BUCKET)
+      .upload(path, body, {
+        contentType: "application/json",
+        upsert: true,
+      });
+    if (retryError) {
+      throw new Error(retryError.message);
+    }
   }
+
+  // Optional mirror into SQL table if it exists (ignore failures).
+  await admin
+    .from("telegram_auth_codes")
+    .upsert({
+      code: entry.code,
+      mode: entry.mode,
+      user_id: entry.userId,
+      telegram_id: entry.telegramId,
+      telegram_username: entry.telegramUsername,
+      telegram_first_name: entry.telegramFirstName,
+      telegram_photo_url: entry.telegramPhotoUrl,
+      status: entry.status,
+      created_at: new Date(entry.createdAt).toISOString(),
+      expires_at: new Date(entry.expiresAt).toISOString(),
+      claimed_at: entry.claimedAt
+        ? new Date(entry.claimedAt).toISOString()
+        : null,
+      consumed_at: entry.consumedAt
+        ? new Date(entry.consumedAt).toISOString()
+        : null,
+    })
+    .then(() => undefined)
+    .catch(() => undefined);
+}
+
+async function loadCodeFromStorage(
+  code: string
+): Promise<TelegramPendingCode | null> {
+  const admin = createAdminClient();
+  const { data, error } = await admin.storage
+    .from(CODES_BUCKET)
+    .download(objectPath(code));
+
+  if (error || !data) {
+    return null;
+  }
+
+  const text = await data.text();
+  const parsed = JSON.parse(text) as TelegramPendingCode;
+  return parsed;
 }
 
 export async function createAuthCode(
@@ -144,17 +175,8 @@ export async function getAuthCode(
   let entry = state().codes.get(code) ?? null;
 
   if (!entry) {
-    const admin = createAdminClient();
-    const { data, error } = await admin
-      .from("telegram_auth_codes")
-      .select("*")
-      .eq("code", code)
-      .maybeSingle();
-    if (error) {
-      throw new Error(error.message);
-    }
-    if (data) {
-      entry = rowToEntry(data);
+    entry = await loadCodeFromStorage(code);
+    if (entry) {
       state().codes.set(code, entry);
     }
   }
@@ -300,7 +322,7 @@ export async function handleTelegramUpdate(update: TelegramUpdate) {
       error instanceof Error ? error.message : "Verification failed temporarily.";
     await telegramApi("sendMessage", {
       chat_id: chatId,
-      text: `Could not verify right now (${msg}). If the site uses Supabase, make sure the project is resumed, then try a new link from the website.`,
+      text: `Could not verify right now (${msg}). Resume Supabase if paused, then try a new link from the website.`,
     }).catch(() => undefined);
   }
 }
