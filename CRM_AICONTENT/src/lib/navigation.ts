@@ -17,6 +17,7 @@ import {
   Shirt,
   TrendingUp,
   Upload,
+  UserRound,
   Video,
   Wallet,
   type LucideIcon,
@@ -39,12 +40,13 @@ export const navigation: NavSection[] = [
     items: [
       { label: "Dashboard", href: "/", icon: LayoutDashboard },
       { label: "Jobs", href: "/jobs", icon: ListTodo },
+      { label: "My Models", href: "/models", icon: UserRound },
     ],
   },
   {
     title: "VIDEO GENERATION",
     items: [
-      { label: "Single Generation", href: "/video/single", icon: Video },
+      { label: "Generate", href: "/video/single", icon: Video },
       { label: "Batch Video Generation", href: "/video/batch", icon: Layers },
       { label: "LTX Video Generation", href: "/video/ltx", icon: Film },
       {

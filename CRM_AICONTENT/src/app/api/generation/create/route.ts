@@ -13,7 +13,9 @@ export async function POST(request: Request) {
       prompt?: string;
       aspect?: string;
       duration?: number;
+      resolution?: string | null;
       imageUrl?: string | null;
+      imageUrls?: string[] | null;
       audioUrl?: string | null;
     };
 
@@ -33,7 +35,12 @@ export async function POST(request: Request) {
       );
     }
 
-    if (model.requiresImage && !body.imageUrl) {
+    const imageUrls = [
+      ...(body.imageUrls ?? []),
+      ...(body.imageUrl ? [body.imageUrl] : []),
+    ].filter(Boolean);
+
+    if (model.requiresImage && imageUrls.length === 0) {
       return NextResponse.json(
         {
           ok: false,
@@ -59,7 +66,8 @@ export async function POST(request: Request) {
       prompt,
       aspect: body.aspect || model.defaultAspect,
       duration: body.duration ?? model.defaultDuration,
-      imageUrl: body.imageUrl,
+      resolution: body.resolution,
+      imageUrls,
       audioUrl: body.audioUrl,
     });
 

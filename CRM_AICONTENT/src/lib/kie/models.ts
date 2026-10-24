@@ -330,10 +330,18 @@ export function buildKieInput(options: {
   aspect: string;
   duration?: number;
   imageUrl?: string | null;
+  imageUrls?: string[] | null;
   audioUrl?: string | null;
+  resolution?: string | null;
 }): { model: string; input: Record<string, unknown> } {
-  const { model: def, prompt, aspect, duration, imageUrl, audioUrl } = options;
-  const hasImage = Boolean(imageUrl);
+  const { model: def, prompt, aspect, duration, audioUrl, resolution } = options;
+  const urls = [
+    ...(options.imageUrls ?? []),
+    ...(options.imageUrl ? [options.imageUrl] : []),
+  ].filter(Boolean) as string[];
+  const uniqueUrls = [...new Set(urls)];
+  const hasImage = uniqueUrls.length > 0;
+  const primary = uniqueUrls[0];
   const slug =
     hasImage && def.imageRefModel ? def.imageRefModel : def.model;
 
@@ -345,24 +353,36 @@ export function buildKieInput(options: {
   if (def.id === "veo-3-1") {
     input.aspectRatio = aspect;
     input.model = "veo3_fast";
-    if (hasImage && imageUrl) {
-      input.imageUrls = [imageUrl];
+    if (hasImage) {
+      input.imageUrls = uniqueUrls;
     }
   } else if (!(hasImage && def.id === "pixverse-v6-max")) {
     // PixVerse i2v follows source image ratio — skip aspect when image attached.
     input.aspect_ratio = aspect;
   }
 
+  if (resolution) {
+    input.resolution = resolution;
+    // Some image models use image_size / quality naming
+    if (def.mode === "image") {
+      input.image_size = resolution.toLowerCase();
+    }
+  }
+
   if (def.mode === "video" && duration) {
     input.duration = duration;
   }
 
-  if (hasImage && imageUrl && def.id !== "veo-3-1") {
+  if (hasImage && primary && def.id !== "veo-3-1") {
     const field = def.imageRefField ?? "image_url";
-    if (field === "image_urls" || field === "reference_image_urls" || field === "input_urls") {
-      input[field] = [imageUrl];
+    if (
+      field === "image_urls" ||
+      field === "reference_image_urls" ||
+      field === "input_urls"
+    ) {
+      input[field] = uniqueUrls;
     } else {
-      input[field] = imageUrl;
+      input[field] = primary;
     }
   }
 

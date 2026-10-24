@@ -1,0 +1,211 @@
+.gen-dock-page {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - 3rem);
+  margin: -0.5rem -1.5rem -2rem;
+  padding: 0;
+}
+
+@media (min-width: 1024px) {
+  .gen-dock-page {
+    margin-left: -2rem;
+    margin-right: -2rem;
+  }
+}
+
+.gen-dock-stage {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(180px, 0.7fr);
+  gap: 0;
+  min-height: 320px;
+  border-bottom: 1px solid var(--border);
+  background: var(--background);
+}
+
+.gen-dock-cell {
+  border-right: 1px solid var(--border);
+  min-height: 280px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in oklab, var(--card) 80%, transparent);
+  position: relative;
+  overflow: hidden;
+}
+
+.gen-dock-cell:last-child {
+  border-right: none;
+}
+
+.gen-dock-panel {
+  border-top: 1px solid var(--border);
+  background: var(--card);
+  padding: 1rem 1.25rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.gen-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  height: 2.25rem;
+  padding: 0 0.85rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--muted);
+  font-size: 0.8rem;
+  color: var(--foreground);
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.gen-chip[data-active="true"] {
+  background: color-mix(in oklab, var(--primary) 18%, transparent);
+  border-color: color-mix(in oklab, var(--primary) 45%, transparent);
+  color: var(--primary);
+}
+
+.gen-chip:hover {
+  border-color: color-mix(in oklab, var(--primary) 35%, transparent);
+}
+
+.gen-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.gen-prompt {
+  width: 100%;
+  min-height: 48px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--muted);
+  padding: 0.75rem 1rem;
+  font-size: 0.9rem;
+  color: var(--foreground);
+  outline: none;
+}
+
+.gen-prompt:focus {
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--primary) 35%, transparent);
+}
+
+.gen-menu {
+  position: absolute;
+  z-index: 40;
+  min-width: 200px;
+  max-height: 280px;
+  overflow: auto;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  padding: 0.35rem;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+
+.gen-menu button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.6rem;
+  border-radius: 8px;
+  padding: 0.55rem 0.65rem;
+  text-align: left;
+  font-size: 0.8rem;
+}
+
+.gen-menu button[data-active="true"],
+.gen-menu button:hover {
+  background: color-mix(in oklab, var(--primary) 14%, transparent);
+  color: var(--primary);
+}
+
+.gen-toggle {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--border);
+  transition: background 0.15s;
+  flex-shrink: 0;
+}
+
+.gen-toggle[data-on="true"] {
+  background: var(--primary);
+}
+
+.gen-toggle::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: white;
+  transition: transform 0.15s;
+}
+
+.gen-toggle[data-on="true"]::after {
+  transform: translateX(16px);
+}
+
+.gen-cat-rail {
+  display: flex;
+  gap: 0.55rem;
+  overflow-x: auto;
+  padding-bottom: 0.15rem;
+}
+
+.gen-cat {
+  flex: 0 0 auto;
+  width: 76px;
+  text-align: center;
+}
+
+.gen-cat-thumb {
+  width: 76px;
+  height: 76px;
+  border-radius: 12px;
+  border: 2px solid transparent;
+  background:
+    linear-gradient(145deg, color-mix(in oklab, var(--primary) 25%, #222), #1a1a22);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  overflow: hidden;
+}
+
+.gen-cat[data-active="true"] .gen-cat-thumb {
+  border-color: var(--primary);
+}
+
+.gen-cat span {
+  display: block;
+  margin-top: 0.3rem;
+  font-size: 10px;
+  color: var(--muted-foreground);
+}
+
+.gen-cat[data-active="true"] span {
+  color: var(--primary);
+}
+
+@media (max-width: 1024px) {
+  .gen-dock-stage {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .gen-dock-stage {
+    grid-template-columns: 1fr;
+  }
+}
