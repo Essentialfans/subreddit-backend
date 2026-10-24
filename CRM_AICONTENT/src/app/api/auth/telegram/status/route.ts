@@ -3,7 +3,6 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import {
   getAuthCode,
-  syncTelegramClaims,
   telegramProfileFields,
 } from "@/lib/telegram/deep-link";
 
@@ -16,14 +15,14 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Missing code." }, { status: 400 });
     }
 
-    await syncTelegramClaims();
-    const entry = getAuthCode(code);
+    // Webhook claims codes into Supabase; we only read status here.
+    const entry = await getAuthCode(code);
 
     if (!entry) {
       return NextResponse.json(
         {
           status: "unknown",
-          error: "Code not found or server restarted. Start again.",
+          error: "Code not found or expired. Start Telegram verification again.",
         },
         { status: 404 }
       );
