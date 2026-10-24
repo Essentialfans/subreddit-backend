@@ -75,10 +75,7 @@ export function VideoDock({
   const [referenceUrl, setReferenceUrl] = useState(initialImageUrl ?? "");
   const [audioUrl, setAudioUrl] = useState("");
   const [enhance, setEnhance] = useState(true);
-  const [slots, setSlots] = useState<Slot[]>([
-    { state: "empty" },
-    { state: "empty" },
-  ]);
+  const [slot, setSlot] = useState<Slot>({ state: "empty" });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [keyReady, setKeyReady] = useState<boolean | null>(null);
@@ -205,7 +202,7 @@ export function VideoDock({
     }
 
     setBusy(true);
-    setSlots([{ state: "generating" }, { state: "empty" }]);
+    setSlot({ state: "generating" });
 
     try {
       let finalPrompt = prompt.trim();
@@ -261,11 +258,11 @@ export function VideoDock({
       }
 
       const url = await pollVideoTask(created.taskId);
-      setSlots([{ state: "done", url }, { state: "empty" }]);
+      setSlot({ state: "done", url });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Video failed";
       setError(message);
-      setSlots([{ state: "error", message }, { state: "empty" }]);
+      setSlot({ state: "error", message });
     } finally {
       setBusy(false);
     }
@@ -273,38 +270,33 @@ export function VideoDock({
 
   return (
     <div className="gen-dock-page">
-      <div
-        className="gen-dock-stage"
-        style={{
-          gridTemplateColumns:
-            "minmax(0,1.4fr) minmax(0,1fr) minmax(200px,0.7fr)",
-        }}
-      >
-        {slots.map((slot, i) => (
-          <div key={i} className="gen-dock-cell">
-            {slot.state === "generating" ? (
-              <div className="flex flex-col items-center gap-2 text-muted-foreground">
-                <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                <span className="text-sm">Generating video…</span>
-              </div>
-            ) : slot.state === "done" ? (
-              <video
-                src={slot.url}
-                controls
-                className="h-full w-full bg-black object-contain"
-              />
-            ) : slot.state === "error" ? (
-              <p className="px-6 text-center text-sm text-accent-red">
-                {slot.message}
+      <div className="gen-dock-stage gen-dock-stage--video">
+        <div className="gen-dock-cell">
+          {slot.state === "generating" ? (
+            <div className="flex flex-col items-center gap-2 text-muted-foreground">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              <span className="text-sm">Generating video…</span>
+            </div>
+          ) : slot.state === "done" ? (
+            <video
+              src={slot.url}
+              controls
+              className="h-full w-full bg-black object-contain"
+            />
+          ) : slot.state === "error" ? (
+            <p className="px-6 text-center text-sm text-accent-red">
+              {slot.message}
+            </p>
+          ) : (
+            <div className="flex flex-col items-center gap-1 px-6 text-center">
+              <p className="text-sm text-muted-foreground">Video stage</p>
+              <p className="max-w-sm text-xs text-muted-foreground/80">
+                Pick a model, set duration and resolution, then generate.
               </p>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                {i === 0 ? "Video stage" : "Ready"}
-              </p>
-            )}
-          </div>
-        ))}
-        <div className="gen-dock-cell flex-col gap-3 px-4 text-center">
+            </div>
+          )}
+        </div>
+        <div className="gen-dock-cell gen-dock-cell--aside flex-col gap-3 px-4 text-center">
           <p className="text-xs font-medium text-muted-foreground">
             Source still
           </p>
@@ -371,8 +363,16 @@ export function VideoDock({
           </p>
         </div>
 
-        <div className="flex flex-wrap items-end gap-4">
-          <div className="relative space-y-1">
+        <div
+          className="flex flex-wrap items-end gap-4"
+          data-menu-row={
+            openMenu === "model" || openMenu === "gen" ? "open" : undefined
+          }
+        >
+          <div
+            className="gen-menu-anchor space-y-1"
+            data-open={openMenu === "model"}
+          >
             <p className="gen-label">Identity</p>
             <button
               type="button"
@@ -389,7 +389,7 @@ export function VideoDock({
               <ChevronDown className="h-3.5 w-3.5 opacity-60" />
             </button>
             {openMenu === "model" ? (
-              <div className="gen-menu left-0 top-[calc(100%+6px)]">
+              <div className="gen-menu" data-placement="up">
                 <button
                   type="button"
                   data-active={!creatorId}
@@ -422,11 +422,15 @@ export function VideoDock({
             ) : null}
           </div>
 
-          <div className="relative min-w-[200px] flex-1 space-y-1">
+          <div
+            className="gen-menu-anchor min-w-[200px] flex-1 space-y-1"
+            data-open={openMenu === "gen"}
+          >
             <p className="gen-label">Video model</p>
             <button
               type="button"
               className="gen-chip w-full justify-between sm:w-auto"
+              data-active={openMenu === "gen"}
               onClick={() => setOpenMenu((m) => (m === "gen" ? null : "gen"))}
             >
               <span className="flex items-center gap-2">
@@ -440,7 +444,7 @@ export function VideoDock({
               <ChevronDown className="h-3.5 w-3.5 opacity-60" />
             </button>
             {openMenu === "gen" ? (
-              <div className="gen-menu left-0 bottom-auto top-[calc(100%+6px)] max-h-72">
+              <div className="gen-menu max-h-72" data-placement="up">
                 {categoryModels.map((m) => (
                   <button
                     key={m.id}
@@ -542,12 +546,23 @@ export function VideoDock({
           />
         ) : null}
 
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="relative space-y-1">
+        <div
+          className="flex flex-wrap items-center gap-3"
+          data-menu-row={
+            openMenu === "ratio" || openMenu === "duration"
+              ? "open"
+              : undefined
+          }
+        >
+          <div
+            className="gen-menu-anchor space-y-1"
+            data-open={openMenu === "ratio"}
+          >
             <p className="gen-label">Ratio</p>
             <button
               type="button"
               className="gen-chip"
+              data-active={openMenu === "ratio"}
               onClick={() =>
                 setOpenMenu((m) => (m === "ratio" ? null : "ratio"))
               }
@@ -557,7 +572,7 @@ export function VideoDock({
               <ChevronDown className="h-3.5 w-3.5 opacity-60" />
             </button>
             {openMenu === "ratio" ? (
-              <div className="gen-menu left-0 bottom-[calc(100%+6px)]">
+              <div className="gen-menu" data-placement="up">
                 {(videoModel?.aspectOptions ?? ["9:16", "16:9", "1:1"]).map(
                   (id) => {
                     const opt = RATIO_OPTIONS.find((r) => r.id === id);
@@ -585,7 +600,10 @@ export function VideoDock({
           </div>
 
           {showDuration ? (
-            <div className="relative space-y-1">
+            <div
+              className="gen-menu-anchor space-y-1"
+              data-open={openMenu === "duration"}
+            >
               <p className="gen-label">Duration</p>
               {durationOptions.length <= 6 ? (
                 <div className="flex rounded-full border border-border bg-muted p-0.5">
@@ -621,7 +639,7 @@ export function VideoDock({
                     <ChevronDown className="h-3.5 w-3.5 opacity-60" />
                   </button>
                   {openMenu === "duration" ? (
-                    <div className="gen-menu left-0 bottom-[calc(100%+6px)] max-h-56">
+                    <div className="gen-menu max-h-56" data-placement="up">
                       {durationOptions.map((d) => (
                         <button
                           key={d}
@@ -653,7 +671,7 @@ export function VideoDock({
           ) : null}
 
           {showResolution ? (
-            <div className="relative space-y-1">
+            <div className="space-y-1">
               <p className="gen-label">Resolution</p>
               <div className="flex rounded-full border border-border bg-muted p-0.5">
                 {resolutionOptions.map((r) => (
