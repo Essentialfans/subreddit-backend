@@ -32,7 +32,7 @@ export async function POST(request: Request) {
       userId = user.id;
     }
 
-    const entry = createAuthCode(mode, userId);
+    const entry = await createAuthCode(mode, userId);
 
     return NextResponse.json({
       ok: true,

@@ -23,7 +23,7 @@ export interface TelegramPendingCode {
   consumedAt: number | null;
 }
 
-type TelegramUpdate = {
+export type TelegramUpdate = {
   update_id: number;
   message?: {
     text?: string;
@@ -38,7 +38,6 @@ type TelegramUpdate = {
 
 type GlobalTelegramState = {
   codes: Map<string, TelegramPendingCode>;
-  updateOffset: number;
 };
 
 const globalForTelegram = globalThis as unknown as {
@@ -49,7 +48,6 @@ function state(): GlobalTelegramState {
   if (!globalForTelegram.__aiinstareelsTelegram) {
     globalForTelegram.__aiinstareelsTelegram = {
       codes: new Map(),
-      updateOffset: 0,
     };
   }
   return globalForTelegram.__aiinstareelsTelegram;
@@ -63,53 +61,36 @@ function getBotToken() {
 
 export function getBotUsername() {
   const username = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME;
-  if (!username) throw new Error("NEXT_PUBLIC_TELEGRAM_BOT_USERNAME is not configured");
+  if (!username) {
+    throw new Error("NEXT_PUBLIC_TELEGRAM_BOT_USERNAME is not configured");
+  }
   return username.replace(/^@/, "");
 }
 
-export function createAuthCode(
-  mode: TelegramAuthMode,
-  userId: string | null
-): TelegramPendingCode {
-  const code = randomBytes(16).toString("hex");
-  const now = Date.now();
-  const entry: TelegramPendingCode = {
-    code,
-    mode,
-    userId,
-    status: "pending",
-    telegramId: null,
-    telegramUsername: null,
-    telegramFirstName: null,
-    telegramPhotoUrl: null,
-    createdAt: now,
-    expiresAt: now + 10 * 60 * 1000,
-    claimedAt: null,
-    consumedAt: null,
+function rowToEntry(row: Record<string, unknown>): TelegramPendingCode {
+  return {
+    code: String(row.code),
+    mode: row.mode as TelegramAuthMode,
+    userId: (row.user_id as string | null) ?? null,
+    status: row.status as TelegramCodeStatus,
+    telegramId: (row.telegram_id as number | null) ?? null,
+    telegramUsername: (row.telegram_username as string | null) ?? null,
+    telegramFirstName: (row.telegram_first_name as string | null) ?? null,
+    telegramPhotoUrl: (row.telegram_photo_url as string | null) ?? null,
+    createdAt: new Date(String(row.created_at)).getTime(),
+    expiresAt: new Date(String(row.expires_at)).getTime(),
+    claimedAt: row.claimed_at
+      ? new Date(String(row.claimed_at)).getTime()
+      : null,
+    consumedAt: row.consumed_at
+      ? new Date(String(row.consumed_at)).getTime()
+      : null,
   };
-  state().codes.set(code, entry);
-  void persistCode(entry).catch(() => {
-    // Table may not exist yet — in-memory still works locally.
-  });
-  return entry;
-}
-
-export function getAuthCode(code: string): TelegramPendingCode | null {
-  const entry = state().codes.get(code) ?? null;
-  if (!entry) return null;
-  if (entry.status === "pending" && Date.now() > entry.expiresAt) {
-    entry.status = "expired";
-  }
-  return entry;
-}
-
-export function deepLinkForCode(code: string) {
-  return `https://t.me/${getBotUsername()}?start=${code}`;
 }
 
 async function persistCode(entry: TelegramPendingCode) {
   const admin = createAdminClient();
-  await admin.from("telegram_auth_codes").upsert({
+  const { error } = await admin.from("telegram_auth_codes").upsert({
     code: entry.code,
     mode: entry.mode,
     user_id: entry.userId,
@@ -127,9 +108,72 @@ async function persistCode(entry: TelegramPendingCode) {
       ? new Date(entry.consumedAt).toISOString()
       : null,
   });
+  if (error) {
+    throw error;
+  }
 }
 
-async function telegramApi<T>(
+export async function createAuthCode(
+  mode: TelegramAuthMode,
+  userId: string | null
+): Promise<TelegramPendingCode> {
+  const code = randomBytes(16).toString("hex");
+  const now = Date.now();
+  const entry: TelegramPendingCode = {
+    code,
+    mode,
+    userId,
+    status: "pending",
+    telegramId: null,
+    telegramUsername: null,
+    telegramFirstName: null,
+    telegramPhotoUrl: null,
+    createdAt: now,
+    expiresAt: now + 10 * 60 * 1000,
+    claimedAt: null,
+    consumedAt: null,
+  };
+  state().codes.set(code, entry);
+  await persistCode(entry);
+  return entry;
+}
+
+export async function getAuthCode(
+  code: string
+): Promise<TelegramPendingCode | null> {
+  let entry = state().codes.get(code) ?? null;
+
+  if (!entry) {
+    const admin = createAdminClient();
+    const { data, error } = await admin
+      .from("telegram_auth_codes")
+      .select("*")
+      .eq("code", code)
+      .maybeSingle();
+    if (error) {
+      throw new Error(error.message);
+    }
+    if (data) {
+      entry = rowToEntry(data);
+      state().codes.set(code, entry);
+    }
+  }
+
+  if (!entry) return null;
+
+  if (entry.status === "pending" && Date.now() > entry.expiresAt) {
+    entry.status = "expired";
+    await persistCode(entry).catch(() => undefined);
+  }
+
+  return entry;
+}
+
+export function deepLinkForCode(code: string) {
+  return `https://t.me/${getBotUsername()}?start=${code}`;
+}
+
+export async function telegramApi<T>(
   method: string,
   body?: Record<string, unknown>
 ): Promise<T> {
@@ -153,19 +197,33 @@ async function telegramApi<T>(
   return json.result as T;
 }
 
-function claimFromStartText(
-  text: string,
+function replyTextFor(entry: TelegramPendingCode) {
+  const usernameLabel = entry.telegramUsername
+    ? `@${entry.telegramUsername}`
+    : entry.telegramFirstName ?? "there";
+
+  if (entry.mode === "link") {
+    return `✅ Linked to AiInstaReels as ${usernameLabel}.\nReturn to the app — it should update automatically.`;
+  }
+  if (entry.mode === "signup") {
+    return `✅ Telegram verified as ${usernameLabel}.\nReturn to the app and finish creating your account (name, email, password).`;
+  }
+  return `✅ Telegram verified as ${usernameLabel}.\nReturn to the app to finish signing in.`;
+}
+
+export async function claimCodeFromStart(
+  code: string,
   from: NonNullable<NonNullable<TelegramUpdate["message"]>["from"]>
-) {
-  const match = text.trim().match(/^\/start(?:@\w+)?(?:\s+(.+))?$/i);
-  if (!match?.[1]) return null;
-  const code = match[1].trim();
-  const entry = state().codes.get(code);
+): Promise<TelegramPendingCode | null> {
+  const entry = await getAuthCode(code);
   if (!entry) return null;
+
   if (Date.now() > entry.expiresAt) {
     entry.status = "expired";
+    await persistCode(entry).catch(() => undefined);
     return entry;
   }
+
   if (entry.status !== "pending" && entry.status !== "claimed") {
     return entry;
   }
@@ -176,65 +234,75 @@ function claimFromStartText(
   entry.telegramFirstName = from.first_name ?? null;
   entry.telegramPhotoUrl = null;
   entry.claimedAt = Date.now();
-  void persistCode(entry).catch(() => undefined);
+  state().codes.set(entry.code, entry);
+  await persistCode(entry);
   return entry;
 }
 
-export async function syncTelegramClaims() {
-  // Ensure getUpdates works (webhook would block it).
-  try {
-    await telegramApi("deleteWebhook", { drop_pending_updates: false });
-  } catch {
-    // ignore
+/** Handle one Telegram update (webhook). Always tries to reply helpfully. */
+export async function handleTelegramUpdate(update: TelegramUpdate) {
+  const message = update.message;
+  const text = message?.text;
+  const from = message?.from;
+  const chatId = message?.chat?.id;
+  if (!text || !from || !chatId) return;
+
+  const match = text.trim().match(/^\/start(?:@\w+)?(?:\s+(.+))?$/i);
+  if (!match) {
+    await telegramApi("sendMessage", {
+      chat_id: chatId,
+      text: "Open AiInstaReels and use Sign up / Sign in → Telegram. That creates a one-time link for this bot.",
+    }).catch(() => undefined);
+    return;
   }
 
-  const s = state();
-  const updates = await telegramApi<TelegramUpdate[]>("getUpdates", {
-    offset: s.updateOffset || undefined,
-    timeout: 0,
-    allowed_updates: ["message"],
-  });
+  const code = match[1]?.trim();
+  if (!code) {
+    await telegramApi("sendMessage", {
+      chat_id: chatId,
+      text: "To verify, start from the AiInstaReels website (Sign up or Sign in → Continue with Telegram). Don't send /start here alone.",
+    }).catch(() => undefined);
+    return;
+  }
 
-  for (const update of updates) {
-    s.updateOffset = Math.max(s.updateOffset, update.update_id + 1);
-    const message = update.message;
-    const text = message?.text;
-    const from = message?.from;
-    if (!text || !from) continue;
+  try {
+    const entry = await claimCodeFromStart(code, from);
+    if (!entry) {
+      await telegramApi("sendMessage", {
+        chat_id: chatId,
+        text: "This link expired or is invalid. Go back to AiInstaReels and generate a new Telegram link.",
+      }).catch(() => undefined);
+      return;
+    }
 
-    const entry = claimFromStartText(text, from);
-    if (!entry || entry.status !== "claimed" || !message.chat?.id) continue;
+    if (entry.status === "expired") {
+      await telegramApi("sendMessage", {
+        chat_id: chatId,
+        text: "This verification link expired. Generate a new one on AiInstaReels.",
+      }).catch(() => undefined);
+      return;
+    }
 
-    const usernameLabel = entry.telegramUsername
-      ? `@${entry.telegramUsername}`
-      : entry.telegramFirstName ?? "there";
+    if (entry.status === "consumed") {
+      await telegramApi("sendMessage", {
+        chat_id: chatId,
+        text: "This link was already used. Sign in on AiInstaReels, or generate a new link if needed.",
+      }).catch(() => undefined);
+      return;
+    }
 
     await telegramApi("sendMessage", {
-      chat_id: message.chat.id,
-      text:
-        entry.mode === "link"
-          ? `✅ Linked to AiInstaReels as ${usernameLabel}.\nReturn to the app — it should update automatically.`
-          : entry.mode === "signup"
-            ? `✅ Telegram verified as ${usernameLabel}.\nReturn to the app and finish creating your account (name, email, password).`
-            : `✅ Telegram verified as ${usernameLabel}.\nReturn to the app to finish signing in.`,
+      chat_id: chatId,
+      text: replyTextFor(entry),
+    });
+  } catch (error) {
+    const msg =
+      error instanceof Error ? error.message : "Verification failed temporarily.";
+    await telegramApi("sendMessage", {
+      chat_id: chatId,
+      text: `Could not verify right now (${msg}). If the site uses Supabase, make sure the project is resumed, then try a new link from the website.`,
     }).catch(() => undefined);
   }
-}
-
-export async function consumeClaimedCode(code: string) {
-  const entry = getAuthCode(code);
-  if (!entry) return null;
-  if (entry.status === "pending") {
-    await syncTelegramClaims();
-  }
-  const latest = getAuthCode(code);
-  if (!latest) return null;
-  if (latest.status === "claimed") {
-    latest.status = "consumed";
-    latest.consumedAt = Date.now();
-    void persistCode(latest).catch(() => undefined);
-  }
-  return latest;
 }
 
 export function telegramProfileFields(entry: TelegramPendingCode) {
@@ -249,4 +317,14 @@ export function telegramProfileFields(entry: TelegramPendingCode) {
     telegram_linked_at: new Date().toISOString(),
     telegram_verified: true,
   };
+}
+
+export async function ensureTelegramWebhook(publicBaseUrl: string) {
+  const url = `${publicBaseUrl.replace(/\/$/, "")}/api/auth/telegram/webhook`;
+  await telegramApi("setWebhook", {
+    url,
+    allowed_updates: ["message"],
+    drop_pending_updates: false,
+  });
+  return url;
 }

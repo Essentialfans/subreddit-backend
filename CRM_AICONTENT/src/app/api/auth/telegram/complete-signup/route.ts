@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   getAuthCode,
-  syncTelegramClaims,
   telegramProfileFields,
 } from "@/lib/telegram/deep-link";
 
@@ -29,8 +28,7 @@ export async function POST(request: Request) {
       );
     }
 
-    await syncTelegramClaims();
-    const entry = getAuthCode(code);
+    const entry = await getAuthCode(code);
 
     if (!entry || entry.mode !== "signup") {
       return NextResponse.json(
