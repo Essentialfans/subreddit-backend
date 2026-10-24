@@ -44,11 +44,31 @@ export const navigation: NavSection[] = [
     ],
   },
   {
+    title: "IMAGE GENERATION",
+    items: [
+      {
+        label: "Image Generation",
+        href: "/image/generate",
+        icon: Image,
+      },
+      {
+        label: "Flexible Image Generation",
+        href: "/image/flexible",
+        icon: Palette,
+      },
+      {
+        label: "Construct Image Generation",
+        href: "/image/construct",
+        icon: Layers,
+      },
+    ],
+  },
+  {
     title: "VIDEO GENERATION",
     items: [
-      { label: "Generate", href: "/video/single", icon: Video },
-      { label: "Batch Video Generation", href: "/video/batch", icon: Layers },
-      { label: "LTX Video Generation", href: "/video/ltx", icon: Film },
+      { label: "Video Generation", href: "/video/single", icon: Video },
+      { label: "Batch Video Generation", href: "/video/batch", icon: Film },
+      { label: "LTX Video Generation", href: "/video/ltx", icon: Clapperboard },
       {
         label: "Infinite Talk Generation",
         href: "/video/infinite-talk",
@@ -58,22 +78,7 @@ export const navigation: NavSection[] = [
       {
         label: "Video Creation",
         href: "/video/creation",
-        icon: Clapperboard,
-      },
-    ],
-  },
-  {
-    title: "IMAGE GENERATION",
-    items: [
-      {
-        label: "Flexible Image Generation",
-        href: "/image/flexible",
-        icon: Image,
-      },
-      {
-        label: "Construct Image Generation",
-        href: "/image/construct",
-        icon: Palette,
+        icon: MonitorPlay,
       },
     ],
   },

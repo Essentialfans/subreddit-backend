@@ -3,8 +3,10 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowRight,
   Check,
   ChevronDown,
+  Clapperboard,
   Loader2,
   Minus,
   Plus,
@@ -290,19 +292,33 @@ export function GenerateDock({
     <div className="gen-dock-page">
       <div className="gen-dock-stage">
         {slots.map((slot, i) => (
-          <div key={i} className="gen-dock-cell">
+          <div key={i} className="gen-dock-cell group">
             {slot.state === "generating" ? (
               <div className="flex flex-col items-center gap-2 text-muted-foreground">
                 <Loader2 className="h-8 w-8 animate-spin text-primary" />
                 <span className="text-sm">Generating…</span>
               </div>
             ) : slot.state === "done" ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={slot.url}
-                alt=""
-                className="h-full w-full object-cover"
-              />
+              <>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={slot.url}
+                  alt=""
+                  className="h-full w-full object-cover"
+                />
+                <div className="absolute inset-x-0 bottom-0 z-10 flex justify-center bg-gradient-to-t from-black/80 to-transparent p-3 opacity-100 transition md:opacity-0 md:group-hover:opacity-100">
+                  <Link
+                    href={`/video/single?image=${encodeURIComponent(slot.url)}${
+                      creatorId ? `&model=${creatorId}` : ""
+                    }`}
+                    className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground shadow"
+                  >
+                    <Clapperboard className="h-3.5 w-3.5" />
+                    Send to video
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </Link>
+                </div>
+              </>
             ) : slot.state === "error" ? (
               <p className="px-6 text-center text-sm text-accent-red">
                 {slot.message}

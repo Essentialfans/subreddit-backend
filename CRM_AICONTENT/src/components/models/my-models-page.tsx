@@ -300,8 +300,8 @@ export function MyModelsPage() {
                 One identity. A consistent look across your images and videos.
               </p>
               <Button asChild className="w-full">
-                <Link href={`/video/single?model=${selected.id}`}>
-                  Select · Generate with this model
+                <Link href={`/image/generate?model=${selected.id}`}>
+                  Select · Image generation
                 </Link>
               </Button>
             </div>
