@@ -44,7 +44,7 @@ export const navigation: NavSection[] = [
   {
     title: "VIDEO GENERATION",
     items: [
-      { label: "Single Video Generation", href: "/video/single", icon: Video },
+      { label: "Single Generation", href: "/video/single", icon: Video },
       { label: "Batch Video Generation", href: "/video/batch", icon: Layers },
       { label: "LTX Video Generation", href: "/video/ltx", icon: Film },
       {
