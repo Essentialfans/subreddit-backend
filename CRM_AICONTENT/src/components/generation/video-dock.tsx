@@ -93,6 +93,7 @@ export function VideoDock({
   const [duration, setDuration] = useState(5);
   const [resolution, setResolution] = useState("720p");
   const [referenceUrl, setReferenceUrl] = useState(initialImageUrl ?? "");
+  const [motionVideoUrl, setMotionVideoUrl] = useState("");
   const [audioUrl, setAudioUrl] = useState("");
   const [enhance, setEnhance] = useState(true);
   const [slot, setSlot] = useState<Slot>({ state: "empty" });
@@ -212,11 +213,17 @@ export function VideoDock({
       );
       return;
     }
+    if (videoModel.requiresMotionVideo && !motionVideoUrl.trim()) {
+      setError(
+        `${videoModel.label} needs a motion-reference video (about 3–30s) that drives the movement.`
+      );
+      return;
+    }
     if (videoModel.requiresAudio && !audioUrl.trim()) {
       setError(`${videoModel.label} needs an audio URL.`);
       return;
     }
-    if (prompt.trim().length < 3) {
+    if (!videoModel.promptOptional && prompt.trim().length < 3) {
       setError("Add a short motion prompt.");
       return;
     }
@@ -257,10 +264,15 @@ export function VideoDock({
         finalPrompt = `${finalPrompt} Featuring ${creator.name}, matching reference identity.`;
       }
 
-      const imageUrls = [
-        ...(referenceUrl ? [referenceUrl] : []),
-        ...(creator?.refs.map((r) => r.publicUrl) ?? []),
-      ];
+      // Motion-control APIs take exactly one still; prompting models can use identity refs too.
+      const imageUrls = videoModel.requiresMotionVideo
+        ? referenceUrl
+          ? [referenceUrl]
+          : []
+        : [
+            ...(referenceUrl ? [referenceUrl] : []),
+            ...(creator?.refs.map((r) => r.publicUrl) ?? []),
+          ];
 
       const createRes = await fetch("/api/generation/create", {
         method: "POST",
@@ -272,6 +284,7 @@ export function VideoDock({
           duration: showDuration ? duration : undefined,
           resolution: showResolution ? resolution : undefined,
           imageUrls,
+          videoUrl: motionVideoUrl.trim() || null,
           audioUrl: audioUrl.trim() || null,
         }),
       });
@@ -605,6 +618,64 @@ export function VideoDock({
             />
           </div>
         </div>
+
+        {videoModel?.requiresMotionVideo ? (
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="space-y-1">
+              <p className="gen-label">Motion reference</p>
+              <label className="gen-chip cursor-pointer">
+                + Upload video
+                <input
+                  type="file"
+                  accept="video/mp4,video/quicktime,video/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (!f) return;
+                    void uploadPublicFile(f)
+                      .then((url) => {
+                        setMotionVideoUrl(url);
+                        setError("");
+                      })
+                      .catch((err) =>
+                        setError(
+                          err instanceof Error
+                            ? err.message
+                            : "Motion video upload failed"
+                        )
+                      );
+                    e.target.value = "";
+                  }}
+                />
+              </label>
+            </div>
+            {motionVideoUrl ? (
+              <span className="text-xs text-accent-green">
+                Motion video attached
+              </span>
+            ) : (
+              <span className="text-xs text-muted-foreground">
+                Required — drives pose/movement (about 3–30s)
+              </span>
+            )}
+            {motionVideoUrl ? (
+              <button
+                type="button"
+                className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+                onClick={() => setMotionVideoUrl("")}
+              >
+                Clear
+              </button>
+            ) : (
+              <input
+                className="gen-prompt min-w-[220px] flex-1"
+                value={motionVideoUrl}
+                onChange={(e) => setMotionVideoUrl(e.target.value.trim())}
+                placeholder="Or paste motion video URL (https://…/clip.mp4)"
+              />
+            )}
+          </div>
+        ) : null}
 
         {videoModel?.requiresAudio ? (
           <input

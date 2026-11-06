@@ -16,6 +16,7 @@ export async function POST(request: Request) {
       resolution?: string | null;
       imageUrl?: string | null;
       imageUrls?: string[] | null;
+      videoUrl?: string | null;
       audioUrl?: string | null;
     };
 
@@ -28,7 +29,7 @@ export async function POST(request: Request) {
     }
 
     const prompt = body.prompt?.trim() ?? "";
-    if (prompt.length < 3) {
+    if (!model.promptOptional && prompt.length < 3) {
       return NextResponse.json(
         { ok: false, error: "Prompt is too short" },
         { status: 400 }
@@ -45,6 +46,16 @@ export async function POST(request: Request) {
         {
           ok: false,
           error: `${model.label} needs a reference image — generate one first or paste a URL.`,
+        },
+        { status: 400 }
+      );
+    }
+
+    if (model.requiresMotionVideo && !body.videoUrl?.trim()) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `${model.label} needs a motion-reference video (3–30s) that drives the movement.`,
         },
         { status: 400 }
       );
@@ -87,6 +98,7 @@ export async function POST(request: Request) {
       duration,
       resolution,
       imageUrls,
+      videoUrl: body.videoUrl,
       audioUrl: body.audioUrl,
     });
 
@@ -103,8 +115,7 @@ export async function POST(request: Request) {
   } catch (error) {
     let message = error instanceof Error ? error.message : "Generation failed";
     if (/this field is required/i.test(message)) {
-      message =
-        "kie.ai rejected the request (a required field was missing). Try again — Seedream needs quality basic/high, Nano Banana needs image_input refs.";
+      message = `kie.ai rejected the request — a required field was missing (${message}). For Motion Control, upload both a source still and a motion-reference video.`;
     }
     const status =
       message === "Unauthorized"

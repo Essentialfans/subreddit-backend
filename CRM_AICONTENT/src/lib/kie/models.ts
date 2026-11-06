@@ -9,6 +9,8 @@ export type ImageRefField =
   | "reference_image_urls"
   | "input_urls";
 
+export type VideoRefField = "video_url" | "video_urls";
+
 /** How resolution is sent to kie.ai for this model */
 export type ResolutionField = "resolution" | "quality" | "mode";
 
@@ -21,10 +23,14 @@ export interface KieModel {
   /** Prefer this slug when a reference image is attached */
   imageRefModel?: string;
   imageRefField?: ImageRefField;
+  /** Motion-control: field for the driving video URL */
+  videoRefField?: VideoRefField;
   badge?: "new";
   blurb: string;
   aspectOptions: string[];
   defaultAspect: string;
+  /** Skip aspect_ratio in payload (some motion APIs don't accept it) */
+  omitAspect?: boolean;
   /** Video-only extras */
   videoCategory?: VideoCategory;
   /** Allowed clip lengths in seconds (from kie.ai docs). Empty = driven by audio/input. */
@@ -41,6 +47,10 @@ export interface KieModel {
   durationAsString?: boolean;
   requiresImage?: boolean;
   requiresAudio?: boolean;
+  /** Needs a motion-reference video (Kling Motion / Wan Animate) */
+  requiresMotionVideo?: boolean;
+  /** Prompt is optional (motion APIs often drive from video alone) */
+  promptOptional?: boolean;
   /** Extra note shown under duration when special */
   durationNote?: string;
 }
@@ -439,23 +449,49 @@ export const VIDEO_MODELS: KieModel[] = [
     resolutionField: "quality",
   },
   // —— Motion control ——
+  // Note: Wan 3.0 is prompting video only. Wan motion transfer on kie is Animate Move (2.2).
+  {
+    id: "wan-animate-move",
+    label: "Wan Animate Move",
+    mode: "video",
+    videoCategory: "motion_control",
+    model: "wan/2-2-animate-move",
+    imageRefField: "image_url",
+    videoRefField: "video_url",
+    blurb: "Transfer motion from a reference video onto your still (Wan Animate).",
+    aspectOptions: ["9:16", "16:9", "1:1"],
+    defaultAspect: "9:16",
+    omitAspect: true,
+    durations: [],
+    resolutions: ["720p"],
+    defaultResolution: "720p",
+    resolutionField: "resolution",
+    requiresImage: true,
+    requiresMotionVideo: true,
+    promptOptional: true,
+    durationNote:
+      "Clip length matches your motion-reference video. (Wan 3.0 is prompting-only — this is Wan Animate Move.)",
+  },
   {
     id: "kling-3-motion",
     label: "Kling 3.0 Motion Control",
     mode: "video",
     videoCategory: "motion_control",
     model: "kling-3.0/motion-control",
-    imageRefField: "image_url",
+    // kie docs: input_urls (image) + video_urls (motion clip)
+    imageRefField: "input_urls",
+    videoRefField: "video_urls",
     blurb: "Drive character motion from a still + motion reference.",
     aspectOptions: ["9:16", "16:9", "1:1"],
     defaultAspect: "9:16",
-    // Length is driven by the motion-reference video — no duration picker.
+    omitAspect: true,
     durations: [],
     resolutions: ["720p", "1080p"],
     defaultResolution: "720p",
-    // Docs send output size via `mode`: 720p | 1080p
     resolutionField: "mode",
     requiresImage: true,
+    requiresMotionVideo: true,
+    promptOptional: true,
     durationNote:
       "Clip length matches your motion-reference video (about 3–30s).",
   },
@@ -494,6 +530,7 @@ export function buildKieInput(options: {
   duration?: number;
   imageUrl?: string | null;
   imageUrls?: string[] | null;
+  videoUrl?: string | null;
   audioUrl?: string | null;
   resolution?: string | null;
 }): { model: string; input: Record<string, unknown> } {
@@ -505,21 +542,30 @@ export function buildKieInput(options: {
   const uniqueUrls = [...new Set(urls)];
   const hasImage = uniqueUrls.length > 0;
   const primary = uniqueUrls[0];
+  const motionVideo = options.videoUrl?.trim() || "";
   const slug =
     hasImage && def.imageRefModel ? def.imageRefModel : def.model;
 
-  const input: Record<string, unknown> = {
-    prompt: prompt.trim(),
-  };
+  const input: Record<string, unknown> = {};
+  const trimmedPrompt = prompt.trim();
+  if (trimmedPrompt) {
+    input.prompt = trimmedPrompt;
+  } else if (!def.promptOptional) {
+    input.prompt = "";
+  }
 
   // Most market models accept aspect_ratio; Veo uses slightly different shapes.
+  // Motion-control APIs (Kling Motion / Wan Animate) omit aspect.
   if (def.id === "veo-3-1") {
     input.aspectRatio = aspect;
     input.model = "veo3_fast";
     if (hasImage) {
       input.imageUrls = uniqueUrls;
     }
-  } else if (!(hasImage && def.id === "pixverse-v6-max")) {
+  } else if (
+    !def.omitAspect &&
+    !(hasImage && def.id === "pixverse-v6-max")
+  ) {
     // PixVerse i2v follows source image ratio — skip aspect when image attached.
     input.aspect_ratio = aspect;
   }
@@ -563,13 +609,18 @@ export function buildKieInput(options: {
 
   if (hasImage && primary && def.id !== "veo-3-1") {
     const field = def.imageRefField ?? "image_url";
+    // Motion-control APIs accept exactly one still (input_urls max 1 / image_url).
+    const imagePayload =
+      def.requiresMotionVideo || field === "input_urls" || field === "image_url"
+        ? [primary]
+        : uniqueUrls;
     if (
       field === "image_urls" ||
       field === "image_input" ||
       field === "reference_image_urls" ||
       field === "input_urls"
     ) {
-      input[field] = uniqueUrls;
+      input[field] = def.requiresMotionVideo ? [primary] : imagePayload;
     } else {
       input[field] = primary;
     }
@@ -580,8 +631,21 @@ export function buildKieInput(options: {
     input.output_format = "png";
   }
 
+  if (motionVideo && def.videoRefField) {
+    if (def.videoRefField === "video_urls") {
+      input.video_urls = [motionVideo];
+    } else {
+      input.video_url = motionVideo;
+    }
+  }
+
   if (audioUrl && def.requiresAudio) {
     input.audio_url = audioUrl;
+  }
+
+  // Kling Motion: character orientation defaults to video
+  if (def.id === "kling-3-motion") {
+    input.character_orientation = "video";
   }
 
   return { model: slug, input };
