@@ -73,6 +73,21 @@ function objectPath(code: string) {
   return `${code}.json`;
 }
 
+/** Supabase often returns "<none>" / empty when the project is paused. */
+function formatStorageError(message: string | undefined) {
+  const raw = (message ?? "").trim();
+  if (
+    !raw ||
+    raw === "<none>" ||
+    /failed to fetch|fetch failed|ENOTFOUND|ECONNREFUSED|timed out|timeout/i.test(
+      raw
+    )
+  ) {
+    return "Database is waking up or unreachable. Wait a minute and try Telegram login again (resume the Supabase project if it was paused).";
+  }
+  return raw;
+}
+
 async function persistCode(entry: TelegramPendingCode) {
   const admin = createAdminClient();
   const body = JSON.stringify(entry);
@@ -98,7 +113,7 @@ async function persistCode(entry: TelegramPendingCode) {
         upsert: true,
       });
     if (retryError) {
-      throw new Error(retryError.message);
+      throw new Error(formatStorageError(retryError.message));
     }
   }
 
