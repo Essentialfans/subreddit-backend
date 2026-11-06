@@ -94,6 +94,7 @@ export function VideoDock({
   const [resolution, setResolution] = useState("720p");
   const [referenceUrl, setReferenceUrl] = useState(initialImageUrl ?? "");
   const [motionVideoUrl, setMotionVideoUrl] = useState("");
+  const [motionUploadPct, setMotionUploadPct] = useState<number | null>(null);
   const [audioUrl, setAudioUrl] = useState("");
   const [enhance, setEnhance] = useState(true);
   const [slot, setSlot] = useState<Slot>({ state: "empty" });
@@ -179,22 +180,44 @@ export function VideoDock({
   const showDuration = durationOptions.length > 0;
   const showResolution = resolutionOptions.length > 0;
 
-  async function uploadPublicFile(file: File): Promise<string> {
-    const form = new FormData();
-    form.append("file", file);
-    const res = await fetch("/api/generation/upload", {
-      method: "POST",
-      body: form,
+  function uploadPublicFile(
+    file: File,
+    onProgress?: (pct: number) => void
+  ): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const form = new FormData();
+      form.append("file", file);
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", "/api/generation/upload");
+      xhr.upload.onprogress = (event) => {
+        if (!onProgress) return;
+        if (!event.lengthComputable || event.total <= 0) {
+          onProgress(0);
+          return;
+        }
+        onProgress(Math.min(99, Math.round((event.loaded / event.total) * 100)));
+      };
+      xhr.onload = () => {
+        try {
+          const json = JSON.parse(xhr.responseText) as {
+            ok: boolean;
+            url?: string;
+            error?: string;
+          };
+          if (xhr.status < 200 || xhr.status >= 300 || !json.ok || !json.url) {
+            reject(new Error(json.error || "Upload failed"));
+            return;
+          }
+          onProgress?.(100);
+          resolve(json.url);
+        } catch {
+          reject(new Error("Upload failed"));
+        }
+      };
+      xhr.onerror = () => reject(new Error("Upload failed"));
+      xhr.onabort = () => reject(new Error("Upload cancelled"));
+      xhr.send(form);
     });
-    const json = (await res.json()) as {
-      ok: boolean;
-      url?: string;
-      error?: string;
-    };
-    if (!res.ok || !json.ok || !json.url) {
-      throw new Error(json.error || "Upload failed");
-    }
-    return json.url;
   }
 
   async function onGenerate() {
@@ -623,16 +646,25 @@ export function VideoDock({
           <div className="flex flex-wrap items-center gap-3">
             <div className="space-y-1">
               <p className="gen-label">Motion reference</p>
-              <label className="gen-chip cursor-pointer">
-                + Upload video
+              <label
+                className="gen-chip cursor-pointer"
+                aria-disabled={motionUploadPct !== null}
+                data-busy={motionUploadPct !== null}
+              >
+                {motionUploadPct !== null
+                  ? `Uploading ${motionUploadPct}%`
+                  : "+ Upload video"}
                 <input
                   type="file"
                   accept="video/mp4,video/quicktime,video/*"
                   className="hidden"
+                  disabled={motionUploadPct !== null}
                   onChange={(e) => {
                     const f = e.target.files?.[0];
                     if (!f) return;
-                    void uploadPublicFile(f)
+                    setMotionUploadPct(0);
+                    setError("");
+                    void uploadPublicFile(f, setMotionUploadPct)
                       .then((url) => {
                         setMotionVideoUrl(url);
                         setError("");
@@ -643,13 +675,36 @@ export function VideoDock({
                             ? err.message
                             : "Motion video upload failed"
                         )
-                      );
+                      )
+                      .finally(() => setMotionUploadPct(null));
                     e.target.value = "";
                   }}
                 />
               </label>
             </div>
-            {motionVideoUrl ? (
+            {motionUploadPct !== null ? (
+              <div className="min-w-[160px] flex-1 space-y-1">
+                <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                  <span>Uploading motion video…</span>
+                  <span className="tabular-nums text-foreground">
+                    {motionUploadPct}%
+                  </span>
+                </div>
+                <div
+                  className="h-1.5 overflow-hidden rounded-full bg-muted"
+                  role="progressbar"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={motionUploadPct}
+                  aria-label="Motion video upload progress"
+                >
+                  <div
+                    className="h-full rounded-full bg-primary transition-[width] duration-150 ease-out"
+                    style={{ width: `${motionUploadPct}%` }}
+                  />
+                </div>
+              </div>
+            ) : motionVideoUrl ? (
               <span className="text-xs text-accent-green">
                 Motion video attached
               </span>
@@ -658,7 +713,7 @@ export function VideoDock({
                 Required — drives pose/movement (about 3–30s)
               </span>
             )}
-            {motionVideoUrl ? (
+            {motionUploadPct !== null ? null : motionVideoUrl ? (
               <button
                 type="button"
                 className="text-xs text-muted-foreground underline-offset-2 hover:underline"
