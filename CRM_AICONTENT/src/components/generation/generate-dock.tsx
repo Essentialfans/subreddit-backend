@@ -330,9 +330,11 @@ export function GenerateDock({
       const selectedModelId =
         mode === "presets" ? presetQuality : genModelId;
       const selectedModel = IMAGE_MODELS.find((m) => m.id === selectedModelId);
-      const persisted = await Promise.all(
-        urls.map((url) =>
-          saveOutputToGallery({
+      const displayUrls: string[] = [];
+      const saveErrors: string[] = [];
+      for (const url of urls) {
+        try {
+          const saved = await saveOutputToGallery({
             kind: "image",
             sourceUrl: url,
             prompt: enhanceJson.prompt,
@@ -341,19 +343,27 @@ export function GenerateDock({
             creatorModelId: creatorId,
             aspect: ratio,
             resolution,
-          })
-        )
-      );
+          });
+          displayUrls.push(saved.publicUrl);
+        } catch (saveErr) {
+          displayUrls.push(url);
+          saveErrors.push(
+            saveErr instanceof Error ? saveErr.message : "Outputs save failed"
+          );
+        }
+      }
       setSlots((prev) =>
         prev.map((s, i) =>
-          i < urls.length
-            ? {
-                state: "done",
-                url: persisted[i]?.publicUrl || urls[i],
-              }
+          i < displayUrls.length
+            ? { state: "done", url: displayUrls[i] }
             : s
         )
       );
+      if (saveErrors.length) {
+        setError(
+          `Image ready, but Outputs save failed: ${saveErrors[0]}. Open Content → Outputs after regenerating.`
+        );
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Generation failed";
       setError(message);

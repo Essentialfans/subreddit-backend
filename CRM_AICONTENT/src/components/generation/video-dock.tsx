@@ -285,17 +285,26 @@ export function VideoDock({
       }
 
       const url = await pollVideoTask(created.taskId);
-      const persisted = await saveOutputToGallery({
-        kind: "video",
-        sourceUrl: url,
-        prompt: finalPrompt,
-        modelId: videoModel.id,
-        modelLabel: videoModel.label,
-        creatorModelId: creatorId,
-        aspect: ratio,
-        resolution: showResolution ? resolution : undefined,
-      });
-      setSlot({ state: "done", url: persisted?.publicUrl || url });
+      try {
+        const persisted = await saveOutputToGallery({
+          kind: "video",
+          sourceUrl: url,
+          prompt: finalPrompt,
+          modelId: videoModel.id,
+          modelLabel: videoModel.label,
+          creatorModelId: creatorId,
+          aspect: ratio,
+          resolution: showResolution ? resolution : undefined,
+        });
+        setSlot({ state: "done", url: persisted.publicUrl });
+      } catch (saveErr) {
+        setSlot({ state: "done", url });
+        setError(
+          `Video ready, but Outputs save failed: ${
+            saveErr instanceof Error ? saveErr.message : "unknown error"
+          }`
+        );
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Video failed";
       setError(message);

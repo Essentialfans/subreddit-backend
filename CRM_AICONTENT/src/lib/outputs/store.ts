@@ -57,12 +57,21 @@ function mapRow(row: DbRow): GenerationOutput {
 
 async function ensureOutputsBucket() {
   const admin = createAdminClient();
-  const { data: buckets } = await admin.storage.listBuckets();
+  const { data: buckets, error: listErr } = await admin.storage.listBuckets();
+  if (listErr) throw new Error(listErr.message);
+
   if (!buckets?.some((b) => b.name === OUTPUTS_BUCKET)) {
-    await admin.storage.createBucket(OUTPUTS_BUCKET, {
-      public: true,
-      fileSizeLimit: 80 * 1024 * 1024,
-    });
+    // Supabase projects reject oversized fileSizeLimit on create (e.g. 80MB → 413).
+    const { error: createErr } = await admin.storage.createBucket(
+      OUTPUTS_BUCKET,
+      {
+        public: true,
+        fileSizeLimit: 50 * 1024 * 1024,
+      }
+    );
+    if (createErr && !/already exists|duplicate/i.test(createErr.message)) {
+      throw new Error(`Could not create outputs bucket: ${createErr.message}`);
+    }
   }
   return admin;
 }

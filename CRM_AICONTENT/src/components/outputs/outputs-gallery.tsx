@@ -146,7 +146,9 @@ export function OutputsGallery() {
           <ImageIcon className="mx-auto h-8 w-8 text-muted-foreground" />
           <p className="mt-3 text-sm font-medium">No outputs yet</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Generate an image or video — it will show up here automatically.
+            Only generations made after Outputs went live are stored (kept 3
+            days). Run a new Image or Video generate — it will appear here
+            automatically.
           </p>
           <div className="mt-4 flex justify-center gap-2">
             <Link
