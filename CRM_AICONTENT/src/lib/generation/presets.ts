@@ -70,14 +70,15 @@ export const RESOLUTION_OPTIONS = [
   { id: "4K", label: "4K" },
 ] as const;
 
+/** Engines wired for Recreate (source still + identity refs). */
 export const RECREATE_GEN_MODELS = [
-  {
-    id: "seedream-5-pro",
-    label: "Seedream 5 Pro",
-  },
   {
     id: "nano-banana-pro",
     label: "Nano Banana Pro",
+  },
+  {
+    id: "seedream-5-pro",
+    label: "Seedream 5.0 Pro",
   },
 ] as const;
 

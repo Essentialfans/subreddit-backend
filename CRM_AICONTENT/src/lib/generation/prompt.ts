@@ -1,5 +1,8 @@
 import {
+  clothingInstruction,
   getPromptRecipe,
+  recreateFallback,
+  type ClothingMode,
   type RecipeContext,
 } from "@/lib/generation/prompt-recipes";
 import { kieChatComplete } from "@/lib/kie/chat";
@@ -15,6 +18,8 @@ export interface PromptBuildInput {
   refLabels?: string[];
   keepPose?: boolean;
   hasImage?: boolean;
+  hasSourceImage?: boolean;
+  clothing?: ClothingMode | null;
   durationSec?: number | null;
   aspect?: string | null;
   /** User's kie.ai key — required for live LLM enhance */
@@ -34,23 +39,45 @@ function recipeContext(input: PromptBuildInput): RecipeContext {
     modelName: input.modelName,
     refLabels: input.refLabels,
     hasImage: input.hasImage,
+    hasSourceImage: input.hasSourceImage ?? input.mode === "recreate",
+    keepPose: input.keepPose,
     durationSec: input.durationSec,
     aspect: input.aspect,
     presetHint: input.presetHint,
     mode: input.mode,
+    clothing: input.clothing,
   };
 }
 
 function buildUserMessage(input: PromptBuildInput, formulaName: string): string {
+  const emptyRecreate =
+    input.mode === "recreate" && !input.userText.trim()
+      ? "(empty — do NOT invent a new scene; recreate the SOURCE image faithfully)"
+      : "(empty — invent a tasteful default scene)";
+
   const bits = [
     `Target formula: ${formulaName}`,
-    `User intent (human language): ${input.userText.trim() || "(empty — invent a tasteful default scene)"}`,
+    `User intent (human language): ${input.userText.trim() || emptyRecreate}`,
   ];
   if (input.modelName) bits.push(`Identity / talent name: ${input.modelName}`);
   if (input.hasImage) {
     bits.push(
-      "Reference identity images ARE attached. Preserve that exact person's face, age, hair, and likeness. Scene/wardrobe may change; identity must not. Never invent a different age from scene stereotypes."
+      "Reference identity images ARE attached. Preserve that exact person's face, age, hair, and likeness. Never invent a different age from scene stereotypes."
     );
+  }
+  if (input.mode === "recreate" || input.hasSourceImage) {
+    bits.push(
+      "RECREATE MODE: Image #1 is the SOURCE still. Recreate that image's scene, background, lighting, and framing. Put the named talent's face onto it using the identity reference images. Do NOT invent a cafe/beach/studio that is not in the source."
+    );
+    if (input.keepPose !== false) {
+      bits.push(
+        "Keep pose ON: match SOURCE pose, body position, camera angle, and composition exactly."
+      );
+    } else {
+      bits.push("Keep pose OFF: scene/setting from SOURCE; pose may adjust slightly.");
+    }
+    const clothes = clothingInstruction(recipeContext(input));
+    if (clothes) bits.push(`Clothing rule: ${clothes}`);
   }
   if (input.durationSec) bits.push(`Clip length target: ~${input.durationSec}s`);
   if (input.aspect) bits.push(`Aspect ratio: ${input.aspect}`);
@@ -58,14 +85,17 @@ function buildUserMessage(input: PromptBuildInput, formulaName: string): string 
   if (input.refLabels?.length) {
     bits.push(`Reference tags: ${input.refLabels.join(", ")}`);
   }
-  if (input.keepPose) bits.push("Preserve pose/composition from references.");
-  if (input.mode === "recreate") {
-    bits.push("Mode: recreate — keep composition close to the source still.");
+  if (input.keepPose && input.mode !== "recreate") {
+    bits.push("Preserve pose/composition from references.");
   }
   if (input.mode === "presets") {
-    bits.push("Mode: presets — lean into the preset vibe while staying photoreal when appropriate.");
+    bits.push(
+      "Mode: presets — lean into the preset vibe while staying photoreal when appropriate."
+    );
   }
-  bits.push("Rewrite into the target model's preferred prompt language. Output the prompt only.");
+  bits.push(
+    "Rewrite into the target model's preferred prompt language. Output the prompt only."
+  );
   return bits.join("\n");
 }
 
@@ -73,14 +103,21 @@ function buildUserMessage(input: PromptBuildInput, formulaName: string): string 
 function sealIdentity(prompt: string, ctx: RecipeContext): string {
   const name = ctx.modelName?.trim();
   if (!name) return prompt.trim();
-  const lock = ctx.hasImage
-    ? `Keep ${name}'s exact face, age, hair, and identity from the reference images as the sole subject — do not invent a different person.`
-    : `Featuring ${name} as the sole subject.`;
+  const recreateLock =
+    ctx.mode === "recreate" || ctx.hasSourceImage
+      ? `Recreate the SOURCE image. Keep ${name}'s exact face, age, hair, and identity from the identity reference images as the sole subject — do not invent a different person or a new location.`
+      : ctx.hasImage
+        ? `Keep ${name}'s exact face, age, hair, and identity from the reference images as the sole subject — do not invent a different person.`
+        : `Featuring ${name} as the sole subject.`;
   const trimmed = prompt.trim();
-  if (trimmed.toLowerCase().includes("exact face") && trimmed.toLowerCase().includes(name.toLowerCase())) {
+  if (
+    trimmed.toLowerCase().includes("exact face") &&
+    trimmed.toLowerCase().includes(name.toLowerCase()) &&
+    (ctx.mode !== "recreate" || trimmed.toLowerCase().includes("source"))
+  ) {
     return trimmed;
   }
-  return `${lock} ${trimmed}`.replace(/\s+/g, " ").trim();
+  return `${recreateLock} ${trimmed}`.replace(/\s+/g, " ").trim();
 }
 
 /**
@@ -94,11 +131,14 @@ export async function enhancePrompt(
   const recipe = getPromptRecipe(input.modelId);
   const ctx = recipeContext(input);
   const text = input.userText.trim();
+  const isRecreate = input.mode === "recreate" || Boolean(input.hasSourceImage);
 
   if (!input.enhanceWithAi) {
-    const passthrough = sealIdentity(text || recipe.fallbackExpand("", ctx), ctx);
+    const base = isRecreate
+      ? recreateFallback(text, ctx)
+      : text || recipe.fallbackExpand("", ctx);
     return {
-      prompt: passthrough,
+      prompt: sealIdentity(base, ctx),
       provider: "passthrough",
       recipeId: recipe.id,
       formulaName: recipe.formulaName,
@@ -109,7 +149,11 @@ export async function enhancePrompt(
     try {
       const raw = await kieChatComplete({
         apiKey: input.kieApiKey,
-        system: recipe.systemPrompt,
+        system: isRecreate
+          ? `${recipe.systemPrompt}
+
+RECREATE OVERRIDE: The first attached image is the SOURCE. You must recreate that source (pose/scene/lighting). Never invent an unrelated setting. Identity refs supply the face only.`
+          : recipe.systemPrompt,
         user: buildUserMessage(input, recipe.formulaName),
       });
       return {
@@ -122,7 +166,9 @@ export async function enhancePrompt(
     } catch (err) {
       const message = err instanceof Error ? err.message : "Enhancer failed";
       return {
-        prompt: recipe.fallbackExpand(text, ctx),
+        prompt: isRecreate
+          ? recreateFallback(text, ctx)
+          : recipe.fallbackExpand(text, ctx),
         provider: "recipe-fallback",
         recipeId: recipe.id,
         formulaName: recipe.formulaName,
@@ -132,7 +178,9 @@ export async function enhancePrompt(
   }
 
   return {
-    prompt: recipe.fallbackExpand(text, ctx),
+    prompt: isRecreate
+      ? recreateFallback(text, ctx)
+      : recipe.fallbackExpand(text, ctx),
     provider: "recipe-fallback",
     recipeId: recipe.id,
     formulaName: recipe.formulaName,
@@ -143,7 +191,11 @@ export async function enhancePrompt(
 /** @deprecated Prefer enhancePrompt — kept for any sync callers */
 export function expandPromptStub(input: PromptBuildInput): string {
   const recipe = getPromptRecipe(input.modelId);
-  return recipe.fallbackExpand(input.userText, recipeContext(input));
+  const ctx = recipeContext(input);
+  if (input.mode === "recreate" || input.hasSourceImage) {
+    return recreateFallback(input.userText, ctx);
+  }
+  return recipe.fallbackExpand(input.userText, ctx);
 }
 
 export function parseAtMentions(text: string): {
