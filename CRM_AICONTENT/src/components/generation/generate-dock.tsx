@@ -419,6 +419,47 @@ export function GenerateDock({
                     Send to video
                     <ArrowRight className="h-3.5 w-3.5" />
                   </Link>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void (async () => {
+                        try {
+                          const selectedModelId =
+                            mode === "presets" ? presetQuality : genModelId;
+                          const selectedModel = IMAGE_MODELS.find(
+                            (m) => m.id === selectedModelId
+                          );
+                          const saved = await saveOutputToGallery({
+                            kind: "image",
+                            sourceUrl: slot.url,
+                            prompt: expandedPrompt || prompt,
+                            modelId: selectedModelId,
+                            modelLabel: selectedModel?.label,
+                            creatorModelId: creatorId,
+                            aspect: ratio,
+                            resolution,
+                          });
+                          setSlots((prev) =>
+                            prev.map((s, idx) =>
+                              idx === i && s.state === "done"
+                                ? { state: "done", url: saved.publicUrl }
+                                : s
+                            )
+                          );
+                          setError("");
+                        } catch (saveErr) {
+                          setError(
+                            saveErr instanceof Error
+                              ? `Outputs save failed: ${saveErr.message}`
+                              : "Outputs save failed"
+                          );
+                        }
+                      })();
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-white/30 bg-black/40 px-3 py-1.5 text-xs font-medium text-white"
+                  >
+                    Save to Outputs
+                  </button>
                   <Link
                     href="/content/outputs"
                     className="inline-flex items-center gap-1.5 rounded-full border border-white/30 bg-black/40 px-3 py-1.5 text-xs font-medium text-white"
