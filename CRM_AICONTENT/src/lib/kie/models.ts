@@ -525,15 +525,8 @@ export function buildKieInput(options: {
 
   if (resolution) {
     if (isSeedreamModel(def)) {
-      // Seedream requires `quality` (basic|high). 9:16 / 16:9 only support 1K (basic).
-      let quality = formatResolutionForApi(resolution, def);
-      if (
-        (aspect === "9:16" || aspect === "16:9") &&
-        quality === "high"
-      ) {
-        quality = "basic";
-      }
-      input.quality = quality;
+      // Seedream requires `quality`: basic ≈ 1K, high ≈ 2K (not a resolution string).
+      input.quality = formatResolutionForApi(resolution, def);
       input.output_format = "png";
     } else if (def.mode === "image") {
       // Nano Banana family uses 1K/2K/4K on `resolution` only.
