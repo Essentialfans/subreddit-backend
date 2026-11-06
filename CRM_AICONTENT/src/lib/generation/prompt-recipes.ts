@@ -20,14 +20,50 @@ export interface PromptRecipe {
   fallbackExpand: (userText: string, ctx: RecipeContext) => string;
 }
 
+export type ClothingMode = "model" | "source" | "external";
+
 export interface RecipeContext {
   modelName?: string | null;
   refLabels?: string[];
   hasImage?: boolean;
+  /** Recreate: a source still is the composition driver */
+  hasSourceImage?: boolean;
+  keepPose?: boolean;
   durationSec?: number | null;
   aspect?: string | null;
   presetHint?: string | null;
   mode?: "presets" | "recreate" | "free";
+  clothing?: ClothingMode | null;
+}
+
+export function clothingInstruction(ctx: RecipeContext): string {
+  switch (ctx.clothing) {
+    case "source":
+      return "Keep the exact clothing, outfit, and accessories from the SOURCE image.";
+    case "external":
+      return "Dress the subject in the EXTERNAL clothing reference image; ignore source/model outfits.";
+    case "model":
+      return "Dress the subject using clothing/style consistent with the My Model identity references (not the source outfit).";
+    default:
+      return "";
+  }
+}
+
+export function recreateFallback(userText: string, ctx: RecipeContext): string {
+  const name = ctx.modelName?.trim() || "the subject";
+  const pose = ctx.keepPose !== false
+    ? "Match the SOURCE image pose, body position, camera angle, framing, and composition exactly."
+    : "Keep the SOURCE scene and setting; pose may adjust slightly.";
+  const clothes = clothingInstruction(ctx);
+  const extra = userText.replace(/@[a-zA-Z0-9_-]+/g, "").trim();
+  return joinParts(
+    `Recreate the SOURCE image as a photoreal still.`,
+    pose,
+    `Replace the person with ${name}: keep ${name}'s exact face, age, hair, skin tone, and body from the identity reference images — do not invent a different person.`,
+    clothes,
+    extra ? `Extra direction: ${extra}.` : "Do not invent a new scene, location, or background — stay faithful to the SOURCE.",
+    "Sharp face detail, natural skin, coherent lighting matching the source."
+  );
 }
 
 function identityLine(ctx: RecipeContext): string {
@@ -64,14 +100,16 @@ const IMAGE_DEFAULT: PromptRecipe = {
 When a named talent and reference images are provided, the subject MUST stay that exact person (same face, age, hair). Never invent a different age/ethnicity/appearance from the scene. Scene and wardrobe may change; identity may not.
 Structure: identity lock → scene/action → lighting → style → quality. Keep under 90 words. No camera moves. Return ONLY the prompt.`,
   fallbackExpand: (userText, ctx) =>
-    joinParts(
-      identityLine(ctx),
-      userText
-        ? `Creative direction: ${userText.replace(/@[a-zA-Z0-9_-]+/g, "").trim()}.`
-        : "Tasteful lifestyle portrait, vertical framing.",
-      "Photoreal, clean lighting, sharp facial detail, natural skin texture.",
-      refsLine(ctx)
-    ),
+    ctx.mode === "recreate" || ctx.hasSourceImage
+      ? recreateFallback(userText, ctx)
+      : joinParts(
+          identityLine(ctx),
+          userText
+            ? `Creative direction: ${userText.replace(/@[a-zA-Z0-9_-]+/g, "").trim()}.`
+            : "Tasteful lifestyle portrait, vertical framing.",
+          "Photoreal, clean lighting, sharp facial detail, natural skin texture.",
+          refsLine(ctx)
+        ),
 };
 
 const VIDEO_RECIPES: Record<string, PromptRecipe> = {

@@ -24,6 +24,8 @@ export async function POST(request: Request) {
       refLabels?: string[];
       keepPose?: boolean;
       hasImage?: boolean;
+      hasSourceImage?: boolean;
+      clothing?: "model" | "source" | "external" | null;
       durationSec?: number | null;
       aspect?: string | null;
     };
@@ -47,6 +49,8 @@ export async function POST(request: Request) {
       refLabels: body.refLabels,
       keepPose: body.keepPose,
       hasImage: body.hasImage,
+      hasSourceImage: body.hasSourceImage ?? body.mode === "recreate",
+      clothing: body.clothing ?? null,
       durationSec: body.durationSec ?? catalog?.defaultDuration ?? null,
       aspect: body.aspect ?? catalog?.defaultAspect ?? null,
       kieApiKey,
