@@ -67,14 +67,19 @@ function buildUserMessage(input: PromptBuildInput, formulaName: string): string 
   }
   if (input.mode === "recreate" || input.hasSourceImage) {
     bits.push(
-      "RECREATE MODE: Image #1 is the SOURCE still. Recreate that image's scene, background, lighting, and framing. Put the named talent's face onto it using the identity reference images. Do NOT invent a cafe/beach/studio that is not in the source."
+      "RECREATE MODE (identity-first): The FIRST images are My Model identity refs — use that person's FULL body and face (age, hair, physique, proportions). The LAST image is the SOURCE for pose, camera, scene, and background ONLY."
+    );
+    bits.push(
+      "CRITICAL: Do NOT keep the SOURCE person's body. Replace the entire person with the My Model. Copying the source body/age/figure is a failure."
     );
     if (input.keepPose !== false) {
       bits.push(
-        "Keep pose ON: match SOURCE pose, body position, camera angle, and composition exactly."
+        "Keep pose ON: match SOURCE pose and framing, but rebuild the body as the My Model."
       );
     } else {
-      bits.push("Keep pose OFF: scene/setting from SOURCE; pose may adjust slightly.");
+      bits.push(
+        "Keep pose OFF: scene/setting from SOURCE; pose may adjust; body must still be the My Model."
+      );
     }
     const clothes = clothingInstruction(recipeContext(input));
     if (clothes) bits.push(`Clothing rule: ${clothes}`);
@@ -105,15 +110,23 @@ function sealIdentity(prompt: string, ctx: RecipeContext): string {
   if (!name) return prompt.trim();
   const recreateLock =
     ctx.mode === "recreate" || ctx.hasSourceImage
-      ? `Recreate the SOURCE image. Keep ${name}'s exact face, age, hair, and identity from the identity reference images as the sole subject — do not invent a different person or a new location.`
+      ? `Identity-first recreate: the person must be ${name}'s full body and face from the My Model identity refs — do NOT copy the SOURCE person's body, age, or figure. SOURCE supplies pose/scene only.`
       : ctx.hasImage
-        ? `Keep ${name}'s exact face, age, hair, and identity from the reference images as the sole subject — do not invent a different person.`
+        ? `Keep ${name}'s exact face, age, hair, body, and identity from the reference images as the sole subject — do not invent a different person.`
         : `Featuring ${name} as the sole subject.`;
   const trimmed = prompt.trim();
   if (
+    (ctx.mode === "recreate" || ctx.hasSourceImage) &&
+    /full body|do not copy the source person's body/i.test(trimmed) &&
+    trimmed.toLowerCase().includes(name.toLowerCase())
+  ) {
+    return trimmed;
+  }
+  if (
+    ctx.mode !== "recreate" &&
+    !ctx.hasSourceImage &&
     trimmed.toLowerCase().includes("exact face") &&
-    trimmed.toLowerCase().includes(name.toLowerCase()) &&
-    (ctx.mode !== "recreate" || trimmed.toLowerCase().includes("source"))
+    trimmed.toLowerCase().includes(name.toLowerCase())
   ) {
     return trimmed;
   }
@@ -152,7 +165,7 @@ export async function enhancePrompt(
         system: isRecreate
           ? `${recipe.systemPrompt}
 
-RECREATE OVERRIDE: The first attached image is the SOURCE. You must recreate that source (pose/scene/lighting). Never invent an unrelated setting. Identity refs supply the face only.`
+RECREATE OVERRIDE (identity-first): Identity reference images define the FULL person (face + body shape + age + proportions). The SOURCE image is only for pose, camera, scene, and background. Never keep the source person's body. Never invent an unrelated setting.`
           : recipe.systemPrompt,
         user: buildUserMessage(input, recipe.formulaName),
       });
