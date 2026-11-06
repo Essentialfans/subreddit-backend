@@ -47,7 +47,11 @@ function buildUserMessage(input: PromptBuildInput, formulaName: string): string 
     `User intent (human language): ${input.userText.trim() || "(empty — invent a tasteful default scene)"}`,
   ];
   if (input.modelName) bits.push(`Identity / talent name: ${input.modelName}`);
-  if (input.hasImage) bits.push("A reference / source still is attached (image-to-video or img2img).");
+  if (input.hasImage) {
+    bits.push(
+      "Reference identity images ARE attached. Preserve that exact person's face, age, hair, and likeness. Scene/wardrobe may change; identity must not. Never invent a different age from scene stereotypes."
+    );
+  }
   if (input.durationSec) bits.push(`Clip length target: ~${input.durationSec}s`);
   if (input.aspect) bits.push(`Aspect ratio: ${input.aspect}`);
   if (input.presetHint) bits.push(`Preset vibe: ${input.presetHint}`);
@@ -65,6 +69,20 @@ function buildUserMessage(input: PromptBuildInput, formulaName: string): string 
   return bits.join("\n");
 }
 
+/** Always re-assert identity after LLM rewrite so scene stereotypes can't override refs. */
+function sealIdentity(prompt: string, ctx: RecipeContext): string {
+  const name = ctx.modelName?.trim();
+  if (!name) return prompt.trim();
+  const lock = ctx.hasImage
+    ? `Keep ${name}'s exact face, age, hair, and identity from the reference images as the sole subject — do not invent a different person.`
+    : `Featuring ${name} as the sole subject.`;
+  const trimmed = prompt.trim();
+  if (trimmed.toLowerCase().includes("exact face") && trimmed.toLowerCase().includes(name.toLowerCase())) {
+    return trimmed;
+  }
+  return `${lock} ${trimmed}`.replace(/\s+/g, " ").trim();
+}
+
 /**
  * Expand a short user intent into a model-specific prompt.
  * Uses a dedicated recipe per modelId (never a single shared format).
@@ -78,11 +96,9 @@ export async function enhancePrompt(
   const text = input.userText.trim();
 
   if (!input.enhanceWithAi) {
-    const passthrough = [text, ctx.modelName ? `Featuring ${ctx.modelName}.` : ""]
-      .filter(Boolean)
-      .join(" ");
+    const passthrough = sealIdentity(text || recipe.fallbackExpand("", ctx), ctx);
     return {
-      prompt: passthrough || recipe.fallbackExpand("", ctx),
+      prompt: passthrough,
       provider: "passthrough",
       recipeId: recipe.id,
       formulaName: recipe.formulaName,
@@ -91,13 +107,13 @@ export async function enhancePrompt(
 
   if (input.kieApiKey) {
     try {
-      const prompt = await kieChatComplete({
+      const raw = await kieChatComplete({
         apiKey: input.kieApiKey,
         system: recipe.systemPrompt,
         user: buildUserMessage(input, recipe.formulaName),
       });
       return {
-        prompt,
+        prompt: sealIdentity(raw, ctx),
         provider: "kie-chat",
         recipeId: recipe.id,
         formulaName: recipe.formulaName,

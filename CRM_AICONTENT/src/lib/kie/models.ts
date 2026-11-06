@@ -5,6 +5,7 @@ export type VideoCategory = "prompting" | "motion_control";
 export type ImageRefField =
   | "image_url"
   | "image_urls"
+  | "image_input"
   | "reference_image_urls"
   | "input_urls";
 
@@ -88,7 +89,8 @@ export const IMAGE_MODELS: KieModel[] = [
     label: "Nano Banana Pro",
     mode: "image",
     model: "nano-banana-pro",
-    imageRefField: "image_urls",
+    // kie docs: identity refs go in image_input (NOT image_urls)
+    imageRefField: "image_input",
     blurb: "Google’s sharp stills — great first frame for reels.",
     aspectOptions: ["1:1", "9:16", "16:9", "3:4", "4:3"],
     defaultAspect: "9:16",
@@ -97,7 +99,8 @@ export const IMAGE_MODELS: KieModel[] = [
     id: "nano-banana-2-1",
     label: "Nano Banana 2.1",
     mode: "image",
-    model: "nano-banana-2-1",
+    model: "nano-banana-2",
+    imageRefField: "image_input",
     blurb: "Fast, clean product and lifestyle frames.",
     aspectOptions: ["1:1", "9:16", "16:9", "3:4", "4:3"],
     defaultAspect: "9:16",
@@ -125,6 +128,8 @@ export const IMAGE_MODELS: KieModel[] = [
     label: "Seedream 5.0 Pro",
     mode: "image",
     model: "seedream/5-pro-text-to-image",
+    imageRefModel: "seedream/5-pro-image-to-image",
+    imageRefField: "image_urls",
     blurb: "Photoreal punch for ads and creator thumbnails.",
     aspectOptions: ["1:1", "9:16", "16:9", "3:4", "4:3"],
     defaultAspect: "9:16",
@@ -134,6 +139,8 @@ export const IMAGE_MODELS: KieModel[] = [
     label: "Seedream 5.0 Flash",
     mode: "image",
     model: "seedream/5-lite-text-to-image",
+    imageRefModel: "seedream/5-lite-image-to-image",
+    imageRefField: "image_urls",
     blurb: "Quicker Seedream pass for ideation loops.",
     aspectOptions: ["1:1", "9:16", "16:9"],
     defaultAspect: "9:16",
@@ -152,6 +159,8 @@ export const IMAGE_MODELS: KieModel[] = [
     label: "Seedream 4.5",
     mode: "image",
     model: "seedream/4.5-text-to-image",
+    imageRefModel: "seedream/4.5-image-to-image",
+    imageRefField: "image_urls",
     blurb: "Reliable workhorse for batch-friendly stills.",
     aspectOptions: ["1:1", "9:16", "16:9"],
     defaultAspect: "9:16",
@@ -161,6 +170,7 @@ export const IMAGE_MODELS: KieModel[] = [
     label: "Nano Banana",
     mode: "image",
     model: "google/nano-banana",
+    imageRefField: "image_input",
     blurb: "Lightweight Google stills for quick drafts.",
     aspectOptions: ["1:1", "9:16", "16:9", "3:4", "4:3"],
     defaultAspect: "9:16",
@@ -495,8 +505,12 @@ export function buildKieInput(options: {
 
   if (resolution) {
     if (def.mode === "image") {
+      // Nano Banana family uses 1K/2K/4K on `resolution` only.
+      // Seedream/Flux-style stills often also accept image_size.
       input.resolution = resolution;
-      input.image_size = resolution.toLowerCase();
+      if (!def.id.startsWith("nano-banana")) {
+        input.image_size = resolution.toLowerCase();
+      }
     } else {
       const field = def.resolutionField ?? "resolution";
       const apiRes = formatResolutionForApi(resolution, def);
@@ -523,6 +537,7 @@ export function buildKieInput(options: {
     const field = def.imageRefField ?? "image_url";
     if (
       field === "image_urls" ||
+      field === "image_input" ||
       field === "reference_image_urls" ||
       field === "input_urls"
     ) {
@@ -530,6 +545,11 @@ export function buildKieInput(options: {
     } else {
       input[field] = primary;
     }
+  }
+
+  // Nano Banana Pro docs ask for output_format explicitly.
+  if (def.id.startsWith("nano-banana") || def.id === "nano-banana") {
+    input.output_format = "png";
   }
 
   if (audioUrl && def.requiresAudio) {
