@@ -184,6 +184,19 @@ export function GenerateDock({
     }
   }, [mode, activeGenModels, genModelId, presetQuality]);
 
+  // Seedream 9:16 / 16:9 only support 1K (quality=basic) on kie.ai
+  const activeImageModelId =
+    mode === "presets" ? presetQuality : genModelId;
+  useEffect(() => {
+    if (
+      activeImageModelId.startsWith("seedream") &&
+      (ratio === "9:16" || ratio === "16:9") &&
+      resolution !== "1K"
+    ) {
+      setResolution("1K");
+    }
+  }, [activeImageModelId, ratio, resolution]);
+
   async function uploadPublicFile(file: File): Promise<string> {
     const form = new FormData();
     form.append("file", file);

@@ -101,7 +101,11 @@ export async function POST(request: Request) {
       kieModel: payload.model,
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Generation failed";
+    let message = error instanceof Error ? error.message : "Generation failed";
+    if (/this field is required/i.test(message)) {
+      message =
+        "kie.ai rejected the request (a required field was missing). Try again — Seedream needs quality basic/high, Nano Banana needs image_input refs.";
+    }
     const status =
       message === "Unauthorized"
         ? 401

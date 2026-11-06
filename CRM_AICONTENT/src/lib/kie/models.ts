@@ -62,6 +62,12 @@ export function formatResolutionForApi(
     if (v === "720p" || v === "480p") return "768P";
     if (v === "1080p") return "1080P";
   }
+  // Seedream family: UI 1K/2K → API quality basic/high
+  if (model.id.startsWith("seedream")) {
+    const v = value.toUpperCase();
+    if (v === "2K" || v === "4K" || v === "HIGH") return "high";
+    return "basic";
+  }
   // PixVerse quality enum is lowercase; 480p maps to nearest 540p
   if (model.resolutionField === "quality") {
     const v = value.toLowerCase();
@@ -72,6 +78,10 @@ export function formatResolutionForApi(
     return value.toUpperCase();
   }
   return value.toLowerCase();
+}
+
+function isSeedreamModel(def: KieModel): boolean {
+  return def.id.startsWith("seedream");
 }
 
 export function videoModelsByCategory(category: VideoCategory): KieModel[] {
@@ -130,6 +140,10 @@ export const IMAGE_MODELS: KieModel[] = [
     model: "seedream/5-pro-text-to-image",
     imageRefModel: "seedream/5-pro-image-to-image",
     imageRefField: "image_urls",
+    // kie requires quality: basic (1K) | high (2K) — not resolution
+    resolutionField: "quality",
+    resolutions: ["1K", "2K"],
+    defaultResolution: "1K",
     blurb: "Photoreal punch for ads and creator thumbnails.",
     aspectOptions: ["1:1", "9:16", "16:9", "3:4", "4:3"],
     defaultAspect: "9:16",
@@ -141,6 +155,9 @@ export const IMAGE_MODELS: KieModel[] = [
     model: "seedream/5-lite-text-to-image",
     imageRefModel: "seedream/5-lite-image-to-image",
     imageRefField: "image_urls",
+    resolutionField: "quality",
+    resolutions: ["1K", "2K"],
+    defaultResolution: "1K",
     blurb: "Quicker Seedream pass for ideation loops.",
     aspectOptions: ["1:1", "9:16", "16:9"],
     defaultAspect: "9:16",
@@ -161,6 +178,9 @@ export const IMAGE_MODELS: KieModel[] = [
     model: "seedream/4.5-text-to-image",
     imageRefModel: "seedream/4.5-image-to-image",
     imageRefField: "image_urls",
+    resolutionField: "quality",
+    resolutions: ["1K", "2K"],
+    defaultResolution: "1K",
     blurb: "Reliable workhorse for batch-friendly stills.",
     aspectOptions: ["1:1", "9:16", "16:9"],
     defaultAspect: "9:16",
@@ -504,9 +524,19 @@ export function buildKieInput(options: {
   }
 
   if (resolution) {
-    if (def.mode === "image") {
+    if (isSeedreamModel(def)) {
+      // Seedream requires `quality` (basic|high). 9:16 / 16:9 only support 1K (basic).
+      let quality = formatResolutionForApi(resolution, def);
+      if (
+        (aspect === "9:16" || aspect === "16:9") &&
+        quality === "high"
+      ) {
+        quality = "basic";
+      }
+      input.quality = quality;
+      input.output_format = "png";
+    } else if (def.mode === "image") {
       // Nano Banana family uses 1K/2K/4K on `resolution` only.
-      // Seedream/Flux-style stills often also accept image_size.
       input.resolution = resolution;
       if (!def.id.startsWith("nano-banana")) {
         input.image_size = resolution.toLowerCase();
@@ -522,6 +552,10 @@ export function buildKieInput(options: {
         input.resolution = apiRes;
       }
     }
+  } else if (isSeedreamModel(def)) {
+    // quality is required even when UI omits resolution
+    input.quality = "basic";
+    input.output_format = "png";
   }
 
   if (
