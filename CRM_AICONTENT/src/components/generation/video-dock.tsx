@@ -23,7 +23,9 @@ import {
 } from "@/lib/kie/models";
 import type { CreatorModel } from "@/lib/models/types";
 import { RATIO_OPTIONS } from "@/lib/generation/presets";
+import { uploadGenerationFile } from "@/lib/generation/upload-client";
 import { saveOutputToGallery } from "@/lib/outputs/client";
+import { UploadProgressBar } from "@/components/generation/upload-progress";
 import "./generate-dock.css";
 
 type Slot =
@@ -94,6 +96,7 @@ export function VideoDock({
   const [resolution, setResolution] = useState("720p");
   const [referenceUrl, setReferenceUrl] = useState(initialImageUrl ?? "");
   const [motionVideoUrl, setMotionVideoUrl] = useState("");
+  const [stillUploadPct, setStillUploadPct] = useState<number | null>(null);
   const [motionUploadPct, setMotionUploadPct] = useState<number | null>(null);
   const [audioUrl, setAudioUrl] = useState("");
   const [enhance, setEnhance] = useState(true);
@@ -179,46 +182,6 @@ export function VideoDock({
   );
   const showDuration = durationOptions.length > 0;
   const showResolution = resolutionOptions.length > 0;
-
-  function uploadPublicFile(
-    file: File,
-    onProgress?: (pct: number) => void
-  ): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const form = new FormData();
-      form.append("file", file);
-      const xhr = new XMLHttpRequest();
-      xhr.open("POST", "/api/generation/upload");
-      xhr.upload.onprogress = (event) => {
-        if (!onProgress) return;
-        if (!event.lengthComputable || event.total <= 0) {
-          onProgress(0);
-          return;
-        }
-        onProgress(Math.min(99, Math.round((event.loaded / event.total) * 100)));
-      };
-      xhr.onload = () => {
-        try {
-          const json = JSON.parse(xhr.responseText) as {
-            ok: boolean;
-            url?: string;
-            error?: string;
-          };
-          if (xhr.status < 200 || xhr.status >= 300 || !json.ok || !json.url) {
-            reject(new Error(json.error || "Upload failed"));
-            return;
-          }
-          onProgress?.(100);
-          resolve(json.url);
-        } catch {
-          reject(new Error("Upload failed"));
-        }
-      };
-      xhr.onerror = () => reject(new Error("Upload failed"));
-      xhr.onabort = () => reject(new Error("Upload cancelled"));
-      xhr.send(form);
-    });
-  }
 
   async function onGenerate() {
     setError("");
@@ -590,29 +553,44 @@ export function VideoDock({
 
           <div className="space-y-1">
             <p className="gen-label">Source still</p>
-            <div className="flex items-center gap-2">
-              <label className="gen-chip cursor-pointer">
-                <Plus className="h-4 w-4" />
-                Upload
+            <div className="flex flex-wrap items-center gap-2">
+              <label
+                className="gen-chip cursor-pointer"
+                aria-disabled={stillUploadPct !== null}
+              >
+                {stillUploadPct !== null ? (
+                  `Uploading ${stillUploadPct}%`
+                ) : (
+                  <>
+                    <Plus className="h-4 w-4" />
+                    Upload
+                  </>
+                )}
                 <input
                   type="file"
                   accept="image/*"
                   className="hidden"
+                  disabled={stillUploadPct !== null}
                   onChange={(e) => {
                     const f = e.target.files?.[0];
                     if (!f) return;
-                    void uploadPublicFile(f)
+                    setStillUploadPct(0);
+                    setError("");
+                    void uploadGenerationFile(f, setStillUploadPct)
                       .then(setReferenceUrl)
                       .catch((err) =>
                         setError(
                           err instanceof Error ? err.message : "Upload failed"
                         )
-                      );
+                      )
+                      .finally(() => setStillUploadPct(null));
                     e.target.value = "";
                   }}
                 />
               </label>
-              {!referenceUrl ? (
+              {stillUploadPct !== null ? (
+                <UploadProgressBar pct={stillUploadPct} label="Uploading still…" />
+              ) : !referenceUrl ? (
                 <span className="text-xs text-muted-foreground">
                   or Send to video from Image Generation
                 </span>
@@ -664,7 +642,7 @@ export function VideoDock({
                     if (!f) return;
                     setMotionUploadPct(0);
                     setError("");
-                    void uploadPublicFile(f, setMotionUploadPct)
+                    void uploadGenerationFile(f, setMotionUploadPct)
                       .then((url) => {
                         setMotionVideoUrl(url);
                         setError("");
@@ -683,27 +661,10 @@ export function VideoDock({
               </label>
             </div>
             {motionUploadPct !== null ? (
-              <div className="min-w-[160px] flex-1 space-y-1">
-                <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-                  <span>Uploading motion video…</span>
-                  <span className="tabular-nums text-foreground">
-                    {motionUploadPct}%
-                  </span>
-                </div>
-                <div
-                  className="h-1.5 overflow-hidden rounded-full bg-muted"
-                  role="progressbar"
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-valuenow={motionUploadPct}
-                  aria-label="Motion video upload progress"
-                >
-                  <div
-                    className="h-full rounded-full bg-primary transition-[width] duration-150 ease-out"
-                    style={{ width: `${motionUploadPct}%` }}
-                  />
-                </div>
-              </div>
+              <UploadProgressBar
+                pct={motionUploadPct}
+                label="Uploading motion video…"
+              />
             ) : motionVideoUrl ? (
               <span className="text-xs text-accent-green">
                 Motion video attached

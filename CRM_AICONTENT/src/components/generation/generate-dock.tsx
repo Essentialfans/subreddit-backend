@@ -29,7 +29,9 @@ import {
   type GenerateMode,
 } from "@/lib/generation/presets";
 import { parseAtMentions } from "@/lib/generation/prompt";
+import { uploadGenerationFile } from "@/lib/generation/upload-client";
 import { saveOutputToGallery } from "@/lib/outputs/client";
+import { UploadProgressBar } from "@/components/generation/upload-progress";
 import "./generate-dock.css";
 
 type Slot =
@@ -100,6 +102,11 @@ export function GenerateDock({
   const [externalClothingUrl, setExternalClothingUrl] = useState("");
   const [showSourceUrlField, setShowSourceUrlField] = useState(false);
   const [extraRefs, setExtraRefs] = useState<string[]>([]);
+  const [refUploadPct, setRefUploadPct] = useState<number | null>(null);
+  const [sourceUploadPct, setSourceUploadPct] = useState<number | null>(null);
+  const [clothingUploadPct, setClothingUploadPct] = useState<number | null>(
+    null
+  );
   const [slots, setSlots] = useState<Slot[]>([
     { state: "empty" },
     { state: "empty" },
@@ -184,32 +191,47 @@ export function GenerateDock({
     }
   }, [mode, activeGenModels, genModelId, presetQuality]);
 
-  async function uploadPublicFile(file: File): Promise<string> {
-    const form = new FormData();
-    form.append("file", file);
-    const res = await fetch("/api/generation/upload", {
-      method: "POST",
-      body: form,
-    });
-    const json = (await res.json()) as {
-      ok: boolean;
-      url?: string;
-      error?: string;
-    };
-    if (!res.ok || !json.ok || !json.url) {
-      throw new Error(json.error || "Upload failed");
-    }
-    return json.url;
-  }
-
   async function onUploadRef(file: File) {
-    if (extraRefs.length >= 4) return;
+    if (extraRefs.length >= 4 || refUploadPct !== null) return;
+    setRefUploadPct(0);
+    setError("");
     try {
-      const url = await uploadPublicFile(file);
+      const url = await uploadGenerationFile(file, setRefUploadPct);
       setExtraRefs((prev) => [...prev, url].slice(0, 4));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ref upload failed");
+    } finally {
+      setRefUploadPct(null);
     }
+  }
+
+  function uploadSource(file: File) {
+    if (sourceUploadPct !== null) return;
+    setSourceUploadPct(0);
+    setError("");
+    void uploadGenerationFile(file, setSourceUploadPct)
+      .then((url) => {
+        setSourceUrl(url);
+        setShowSourceUrlField(false);
+      })
+      .catch((err) =>
+        setError(err instanceof Error ? err.message : "Source upload failed")
+      )
+      .finally(() => setSourceUploadPct(null));
+  }
+
+  function uploadClothing(file: File) {
+    if (clothingUploadPct !== null) return;
+    setClothingUploadPct(0);
+    setError("");
+    void uploadGenerationFile(file, setClothingUploadPct)
+      .then(setExternalClothingUrl)
+      .catch((err) =>
+        setError(
+          err instanceof Error ? err.message : "Clothing upload failed"
+        )
+      )
+      .finally(() => setClothingUploadPct(null));
   }
 
   async function onGenerate() {
@@ -647,7 +669,7 @@ export function GenerateDock({
           {mode === "free" ? (
             <div className="space-y-1">
               <p className="gen-label">Refs</p>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 {extraRefs.map((url, i) => (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
@@ -659,11 +681,16 @@ export function GenerateDock({
                   />
                 ))}
                 <label className="gen-chip cursor-pointer">
-                  <Plus className="h-4 w-4" />
+                  {refUploadPct !== null ? (
+                    `${refUploadPct}%`
+                  ) : (
+                    <Plus className="h-4 w-4" />
+                  )}
                   <input
                     type="file"
                     accept="image/*"
                     className="hidden"
+                    disabled={refUploadPct !== null}
                     onChange={(e) => {
                       const f = e.target.files?.[0];
                       if (f) void onUploadRef(f);
@@ -671,6 +698,9 @@ export function GenerateDock({
                     }}
                   />
                 </label>
+                {refUploadPct !== null ? (
+                  <UploadProgressBar pct={refUploadPct} label="Uploading ref…" />
+                ) : null}
               </div>
             </div>
           ) : null}
@@ -700,26 +730,17 @@ export function GenerateDock({
                     <X className="h-3.5 w-3.5" />
                   </button>
                   <label className="absolute inset-x-0 bottom-0 cursor-pointer bg-black/55 py-1 text-center text-[10px] font-medium text-white">
-                    Replace
+                    {sourceUploadPct !== null
+                      ? `Uploading ${sourceUploadPct}%`
+                      : "Replace"}
                     <input
                       type="file"
                       accept="image/*"
                       className="hidden"
+                      disabled={sourceUploadPct !== null}
                       onChange={(e) => {
                         const f = e.target.files?.[0];
-                        if (!f) return;
-                        void uploadPublicFile(f)
-                          .then((url) => {
-                            setSourceUrl(url);
-                            setShowSourceUrlField(false);
-                          })
-                          .catch((err) =>
-                            setError(
-                              err instanceof Error
-                                ? err.message
-                                : "Source upload failed"
-                            )
-                          );
+                        if (f) uploadSource(f);
                         e.target.value = "";
                       }}
                     />
@@ -727,27 +748,27 @@ export function GenerateDock({
                 </div>
               ) : (
                 <label className="flex h-[112px] cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-border bg-muted text-xs text-muted-foreground md:w-[112px]">
-                  <Plus className="h-4 w-4" />
-                  Source
+                  {sourceUploadPct !== null ? (
+                    <>
+                      <span className="tabular-nums text-foreground">
+                        {sourceUploadPct}%
+                      </span>
+                      <span>Uploading…</span>
+                    </>
+                  ) : (
+                    <>
+                      <Plus className="h-4 w-4" />
+                      Source
+                    </>
+                  )}
                   <input
                     type="file"
                     accept="image/*"
                     className="hidden"
+                    disabled={sourceUploadPct !== null}
                     onChange={(e) => {
                       const f = e.target.files?.[0];
-                      if (!f) return;
-                      void uploadPublicFile(f)
-                        .then((url) => {
-                          setSourceUrl(url);
-                          setShowSourceUrlField(false);
-                        })
-                        .catch((err) =>
-                          setError(
-                            err instanceof Error
-                              ? err.message
-                              : "Source upload failed"
-                          )
-                        );
+                      if (f) uploadSource(f);
                       e.target.value = "";
                     }}
                   />
@@ -793,6 +814,12 @@ export function GenerateDock({
                     Paste URL instead
                   </button>
                 )}
+                {sourceUploadPct !== null ? (
+                  <UploadProgressBar
+                    pct={sourceUploadPct}
+                    label="Uploading source…"
+                  />
+                ) : null}
               </div>
             </div>
 
@@ -818,29 +845,33 @@ export function GenerateDock({
                   </div>
                 ) : (
                   <label className="gen-chip cursor-pointer">
-                    <Plus className="h-4 w-4" />
-                    Upload outfit
+                    {clothingUploadPct !== null ? (
+                      `Uploading ${clothingUploadPct}%`
+                    ) : (
+                      <>
+                        <Plus className="h-4 w-4" />
+                        Upload outfit
+                      </>
+                    )}
                     <input
                       type="file"
                       accept="image/*"
                       className="hidden"
+                      disabled={clothingUploadPct !== null}
                       onChange={(e) => {
                         const f = e.target.files?.[0];
-                        if (!f) return;
-                        void uploadPublicFile(f)
-                          .then(setExternalClothingUrl)
-                          .catch((err) =>
-                            setError(
-                              err instanceof Error
-                                ? err.message
-                                : "Clothing upload failed"
-                            )
-                          );
+                        if (f) uploadClothing(f);
                         e.target.value = "";
                       }}
                     />
                   </label>
                 )}
+                {clothingUploadPct !== null ? (
+                  <UploadProgressBar
+                    pct={clothingUploadPct}
+                    label="Uploading outfit…"
+                  />
+                ) : null}
               </div>
             ) : null}
           </div>
