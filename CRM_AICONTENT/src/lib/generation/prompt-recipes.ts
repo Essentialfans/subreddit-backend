@@ -39,11 +39,11 @@ export interface RecipeContext {
 export function clothingInstruction(ctx: RecipeContext): string {
   switch (ctx.clothing) {
     case "source":
-      return "Keep the exact clothing, outfit, and accessories from the SOURCE image.";
+      return "Put the SOURCE outfit/clothing onto the My Model body (same dress/clothes as SOURCE, different body).";
     case "external":
-      return "Dress the subject in the EXTERNAL clothing reference image; ignore source/model outfits.";
+      return "Dress the My Model body in the EXTERNAL clothing reference; ignore source and model outfits.";
     case "model":
-      return "Dress the subject using clothing/style consistent with the My Model identity references (not the source outfit).";
+      return "Dress using clothing/style from the My Model identity references (not the source outfit).";
     default:
       return "";
   }
@@ -51,18 +51,22 @@ export function clothingInstruction(ctx: RecipeContext): string {
 
 export function recreateFallback(userText: string, ctx: RecipeContext): string {
   const name = ctx.modelName?.trim() || "the subject";
-  const pose = ctx.keepPose !== false
-    ? "Match the SOURCE image pose, body position, camera angle, framing, and composition exactly."
-    : "Keep the SOURCE scene and setting; pose may adjust slightly.";
+  const pose =
+    ctx.keepPose !== false
+      ? "Match the SOURCE pose, camera angle, framing, and hand/leg placement — but NOT the source person's body."
+      : "Keep the SOURCE scene and setting; pose may adjust slightly.";
   const clothes = clothingInstruction(ctx);
   const extra = userText.replace(/@[a-zA-Z0-9_-]+/g, "").trim();
   return joinParts(
-    `Recreate the SOURCE image as a photoreal still.`,
+    `Identity-first recreate: the person must be ${name} from the My Model identity references (face AND full body).`,
+    `Use ${name}'s exact face, age, hair, skin tone, body shape, proportions, and physique from the identity images.`,
+    `CRITICAL: Do NOT copy the SOURCE person's body, age, weight, or figure — only borrow pose/scene from SOURCE.`,
     pose,
-    `Replace the person with ${name}: keep ${name}'s exact face, age, hair, skin tone, and body from the identity reference images — do not invent a different person.`,
     clothes,
-    extra ? `Extra direction: ${extra}.` : "Do not invent a new scene, location, or background — stay faithful to the SOURCE.",
-    "Sharp face detail, natural skin, coherent lighting matching the source."
+    extra
+      ? `Extra direction: ${extra}.`
+      : "Keep the SOURCE background, sofa/setting, and lighting — swap only the person for the My Model body.",
+    "Photoreal, sharp face, natural skin, coherent lighting."
   );
 }
 

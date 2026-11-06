@@ -277,17 +277,17 @@ export function GenerateDock({
       }
       setExpandedPrompt(enhanceJson.prompt);
 
-      // Recreate image order for Nano Banana / Seedream:
-      // 1) SOURCE (composition) 2) optional external clothing 3) identity face refs
+      // Recreate image order (identity-first so body comes from My Model):
+      // 1) identity face+body refs  2) optional external clothing  3) SOURCE last (pose/scene only)
       const imageUrls =
         mode === "recreate"
           ? [
-              sourceUrl.trim(),
+              ...identityUrls,
+              ...extraRefs,
               ...(clothing === "external" && externalClothingUrl.trim()
                 ? [externalClothingUrl.trim()]
                 : []),
-              ...identityUrls,
-              ...extraRefs,
+              sourceUrl.trim(),
             ].filter(Boolean)
           : [...identityUrls, ...extraRefs];
 
@@ -547,6 +547,14 @@ export function GenerateDock({
                   </button>
                 ))}
               </div>
+              <p className="max-w-[220px] text-[10px] leading-snug text-muted-foreground">
+                Body always from My Model. Clothing picks outfit only
+                {clothing === "source"
+                  ? " (keep source outfit on model body)."
+                  : clothing === "external"
+                    ? " (upload outfit ref)."
+                    : " (use model’s usual look)."}
+              </p>
             </div>
           ) : null}
 
