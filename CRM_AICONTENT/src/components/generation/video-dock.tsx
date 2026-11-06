@@ -732,8 +732,8 @@ export function VideoDock({
             </div>
           ) : videoModel?.durationNote ? (
             <div className="space-y-1">
-              <p className="gen-label">Duration</p>
-              <p className="max-w-[220px] text-xs text-muted-foreground">
+              <p className="gen-label">Length</p>
+              <p className="max-w-[240px] text-xs leading-snug text-muted-foreground">
                 {videoModel.durationNote}
               </p>
             </div>

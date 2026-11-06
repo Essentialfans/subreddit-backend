@@ -449,14 +449,15 @@ export const VIDEO_MODELS: KieModel[] = [
     blurb: "Drive character motion from a still + motion reference.",
     aspectOptions: ["9:16", "16:9", "1:1"],
     defaultAspect: "9:16",
-    durations: secRange(3, 30),
-    defaultDuration: 5,
+    // Length is driven by the motion-reference video — no duration picker.
+    durations: [],
     resolutions: ["720p", "1080p"],
     defaultResolution: "720p",
     // Docs send output size via `mode`: 720p | 1080p
     resolutionField: "mode",
     requiresImage: true,
-    durationNote: "Motion clip length follows your motion reference (3–30s).",
+    durationNote:
+      "Clip length matches your motion-reference video (about 3–30s).",
   },
   {
     id: "omnihuman-2-0",
