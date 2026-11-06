@@ -218,8 +218,15 @@ export function GenerateDock({
           mode,
           userText: prompt,
           modelName: creator?.name,
+          modelId: mode === "presets" ? presetQuality : genModelId,
           presetHint: preset?.promptHint,
           enhanceWithAi: enhance || mode !== "free",
+          hasImage: Boolean(
+            (mode === "recreate" && sourceUrl) ||
+              (creator?.refs.length ?? 0) > 0 ||
+              extraRefs.length > 0
+          ),
+          aspect: ratio,
           refLabels,
           keepPose,
         }),

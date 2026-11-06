@@ -214,7 +214,11 @@ export function VideoDock({
             mode: "free",
             userText: prompt,
             modelName: creator?.name,
-            enhanceWithAi: true,
+            modelId: videoModel.id,
+            enhanceWithAi: enhance,
+            hasImage: Boolean(referenceUrl.trim()),
+            durationSec: showDuration ? duration : null,
+            aspect: ratio,
             refLabels: referenceUrl ? ["source still"] : [],
           }),
         });
@@ -222,9 +226,12 @@ export function VideoDock({
           ok: boolean;
           prompt?: string;
           error?: string;
+          formulaName?: string;
         };
         if (enhanceRes.ok && enhanceJson.ok && enhanceJson.prompt) {
-          finalPrompt = `${enhanceJson.prompt} Animate as a short vertical video with natural motion.`;
+          // Recipe already includes motion/camera language for this model —
+          // do not append a generic video suffix (that would mix formats).
+          finalPrompt = enhanceJson.prompt;
         }
       } else if (creator?.name) {
         finalPrompt = `${finalPrompt} Featuring ${creator.name}, matching reference identity.`;
