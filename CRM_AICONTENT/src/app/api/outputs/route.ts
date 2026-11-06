@@ -3,20 +3,21 @@ import { requireUserId } from "@/lib/kie/keys";
 import {
   listUserOutputs,
   persistGenerationOutput,
+  persistGenerationOutputBytes,
   type OutputKind,
 } from "@/lib/outputs/store";
 
 export const runtime = "nodejs";
 
+function parseKind(value: unknown): OutputKind | null {
+  return value === "image" || value === "video" ? value : null;
+}
+
 export async function GET(request: Request) {
   try {
     const userId = await requireUserId();
     const { searchParams } = new URL(request.url);
-    const kindParam = searchParams.get("kind");
-    const kind =
-      kindParam === "image" || kindParam === "video"
-        ? (kindParam as OutputKind)
-        : null;
+    const kind = parseKind(searchParams.get("kind"));
     const outputs = await listUserOutputs(userId, kind);
     return NextResponse.json({ ok: true, outputs, ttlDays: 3 });
   } catch (error) {
@@ -29,6 +30,42 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const userId = await requireUserId();
+    const contentType = request.headers.get("content-type") || "";
+
+    // Preferred path: browser uploads the finished file (avoids CF→kie fetch).
+    if (contentType.includes("multipart/form-data")) {
+      const form = await request.formData();
+      const kind = parseKind(form.get("kind"));
+      const file = form.get("file");
+      if (!kind) {
+        return NextResponse.json(
+          { ok: false, error: "kind must be image or video" },
+          { status: 400 }
+        );
+      }
+      if (!(file instanceof File)) {
+        return NextResponse.json(
+          { ok: false, error: "file is required" },
+          { status: 400 }
+        );
+      }
+      const bytes = Buffer.from(await file.arrayBuffer());
+      const output = await persistGenerationOutputBytes({
+        userId,
+        kind,
+        bytes,
+        contentType: file.type || null,
+        sourceUrl: String(form.get("sourceUrl") || "") || null,
+        prompt: String(form.get("prompt") || "") || null,
+        modelId: String(form.get("modelId") || "") || null,
+        modelLabel: String(form.get("modelLabel") || "") || null,
+        creatorModelId: String(form.get("creatorModelId") || "") || null,
+        aspect: String(form.get("aspect") || "") || null,
+        resolution: String(form.get("resolution") || "") || null,
+      });
+      return NextResponse.json({ ok: true, output });
+    }
+
     const body = (await request.json()) as {
       kind?: OutputKind;
       sourceUrl?: string;
@@ -40,7 +77,8 @@ export async function POST(request: Request) {
       resolution?: string;
     };
 
-    if (body.kind !== "image" && body.kind !== "video") {
+    const kind = parseKind(body.kind);
+    if (!kind) {
       return NextResponse.json(
         { ok: false, error: "kind must be image or video" },
         { status: 400 }
@@ -55,7 +93,7 @@ export async function POST(request: Request) {
 
     const output = await persistGenerationOutput({
       userId,
-      kind: body.kind,
+      kind,
       sourceUrl: body.sourceUrl.trim(),
       prompt: body.prompt,
       modelId: body.modelId,

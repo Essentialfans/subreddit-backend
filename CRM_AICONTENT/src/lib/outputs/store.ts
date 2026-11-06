@@ -21,6 +21,18 @@ export interface GenerationOutput {
   expiresAt: string;
 }
 
+export interface PersistMeta {
+  userId: string;
+  kind: OutputKind;
+  sourceUrl?: string | null;
+  prompt?: string | null;
+  modelId?: string | null;
+  modelLabel?: string | null;
+  creatorModelId?: string | null;
+  aspect?: string | null;
+  resolution?: string | null;
+}
+
 type DbRow = {
   id: string;
   kind: OutputKind;
@@ -61,7 +73,6 @@ async function ensureOutputsBucket() {
   if (listErr) throw new Error(listErr.message);
 
   if (!buckets?.some((b) => b.name === OUTPUTS_BUCKET)) {
-    // Supabase projects reject oversized fileSizeLimit on create (e.g. 80MB → 413).
     const { error: createErr } = await admin.storage.createBucket(
       OUTPUTS_BUCKET,
       {
@@ -86,59 +97,29 @@ function extFromContentType(kind: OutputKind, contentType: string | null) {
   return kind === "video" ? "mp4" : "png";
 }
 
-/** Download a provider result URL into our storage and insert a 3-day row. */
-export async function persistGenerationOutput(options: {
-  userId: string;
-  kind: OutputKind;
-  sourceUrl: string;
-  prompt?: string | null;
-  modelId?: string | null;
-  modelLabel?: string | null;
-  creatorModelId?: string | null;
-  aspect?: string | null;
-  resolution?: string | null;
-}): Promise<GenerationOutput> {
-  const admin = await ensureOutputsBucket();
-  const remote = await fetch(options.sourceUrl, { cache: "no-store" });
-  if (!remote.ok) {
-    throw new Error(`Could not download result (${remote.status})`);
-  }
-  const contentType = remote.headers.get("content-type");
-  const buffer = Buffer.from(await remote.arrayBuffer());
-  if (buffer.length < 64) {
-    throw new Error("Downloaded result looked empty");
-  }
-
-  const ext = extFromContentType(options.kind, contentType);
-  const path = `${options.userId}/${options.kind}/${Date.now()}-${Math.random()
-    .toString(36)
-    .slice(2)}.${ext}`;
-
-  const { error: upErr } = await admin.storage
-    .from(OUTPUTS_BUCKET)
-    .upload(path, buffer, {
-      contentType:
-        contentType ||
-        (options.kind === "video" ? "video/mp4" : "image/png"),
-      upsert: false,
-    });
-  if (upErr) throw new Error(upErr.message);
-
-  const { data: pub } = admin.storage.from(OUTPUTS_BUCKET).getPublicUrl(path);
+async function insertOutputRow(
+  admin: ReturnType<typeof createAdminClient>,
+  options: PersistMeta & { publicUrl: string; storagePath: string }
+): Promise<GenerationOutput> {
   const expiresAt = new Date(Date.now() + OUTPUT_TTL_MS).toISOString();
+  const creatorId =
+    options.creatorModelId &&
+    /^[0-9a-f-]{36}$/i.test(options.creatorModelId)
+      ? options.creatorModelId
+      : null;
 
   const { data, error } = await admin
     .from("generation_outputs")
     .insert({
       user_id: options.userId,
       kind: options.kind,
-      public_url: pub.publicUrl,
-      storage_path: path,
-      source_url: options.sourceUrl,
+      public_url: options.publicUrl,
+      storage_path: options.storagePath,
+      source_url: options.sourceUrl ?? null,
       prompt: options.prompt ?? null,
       model_id: options.modelId ?? null,
       model_label: options.modelLabel ?? null,
-      creator_model_id: options.creatorModelId ?? null,
+      creator_model_id: creatorId,
       aspect: options.aspect ?? null,
       resolution: options.resolution ?? null,
       expires_at: expiresAt,
@@ -149,11 +130,91 @@ export async function persistGenerationOutput(options: {
     .single();
 
   if (error || !data) {
-    await admin.storage.from(OUTPUTS_BUCKET).remove([path]).catch(() => null);
     throw new Error(error?.message || "Failed to save output");
   }
-
   return mapRow(data as DbRow);
+}
+
+/** Upload raw bytes into Outputs storage + DB row. */
+export async function persistGenerationOutputBytes(
+  options: PersistMeta & {
+    bytes: Buffer | Uint8Array;
+    contentType?: string | null;
+  }
+): Promise<GenerationOutput> {
+  const admin = await ensureOutputsBucket();
+  const bytes = Buffer.from(options.bytes);
+  if (bytes.length < 64) {
+    throw new Error("Uploaded result looked empty");
+  }
+
+  const ext = extFromContentType(options.kind, options.contentType ?? null);
+  const path = `${options.userId}/${options.kind}/${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2)}.${ext}`;
+
+  const { error: upErr } = await admin.storage
+    .from(OUTPUTS_BUCKET)
+    .upload(path, bytes, {
+      contentType:
+        options.contentType ||
+        (options.kind === "video" ? "video/mp4" : "image/png"),
+      upsert: false,
+    });
+  if (upErr) throw new Error(upErr.message);
+
+  const { data: pub } = admin.storage.from(OUTPUTS_BUCKET).getPublicUrl(path);
+
+  try {
+    return await insertOutputRow(admin, {
+      ...options,
+      publicUrl: pub.publicUrl,
+      storagePath: path,
+    });
+  } catch (err) {
+    await admin.storage.from(OUTPUTS_BUCKET).remove([path]).catch(() => null);
+    throw err;
+  }
+}
+
+/**
+ * Server-side persist from a remote URL.
+ * Falls back to storing the remote URL itself if download/upload fails
+ * (common on Cloudflare Workers when the provider CDN blocks the fetch).
+ */
+export async function persistGenerationOutput(
+  options: PersistMeta & { sourceUrl: string }
+): Promise<GenerationOutput> {
+  const sourceUrl = options.sourceUrl.trim();
+  try {
+    const remote = await fetch(sourceUrl, { cache: "no-store" });
+    if (!remote.ok) {
+      throw new Error(`Could not download result (${remote.status})`);
+    }
+    const contentType = remote.headers.get("content-type");
+    const bytes = Buffer.from(await remote.arrayBuffer());
+    return await persistGenerationOutputBytes({
+      ...options,
+      sourceUrl,
+      bytes,
+      contentType,
+    });
+  } catch (primary) {
+    // Last resort: keep the provider URL so Outputs is still usable.
+    try {
+      const admin = createAdminClient();
+      return await insertOutputRow(admin, {
+        ...options,
+        sourceUrl,
+        publicUrl: sourceUrl,
+        storagePath: `remote:${Date.now()}`,
+      });
+    } catch {
+      throw primary instanceof Error
+        ? primary
+        : new Error("Could not save output");
+    }
+  }
 }
 
 /** Delete expired rows + storage objects. Safe to call often. */
@@ -170,7 +231,9 @@ export async function purgeExpiredOutputs(limit = 100): Promise<number> {
   const rows = data ?? [];
   if (!rows.length) return 0;
 
-  const paths = rows.map((r) => r.storage_path as string).filter(Boolean);
+  const paths = rows
+    .map((r) => r.storage_path as string)
+    .filter((p) => p && !p.startsWith("remote:"));
   if (paths.length) {
     await admin.storage.from(OUTPUTS_BUCKET).remove(paths).catch(() => null);
   }
@@ -221,7 +284,7 @@ export async function deleteUserOutput(
   if (error) throw new Error(error.message);
   if (!data) return;
 
-  if (data.storage_path) {
+  if (data.storage_path && !String(data.storage_path).startsWith("remote:")) {
     await admin.storage
       .from(OUTPUTS_BUCKET)
       .remove([data.storage_path])
