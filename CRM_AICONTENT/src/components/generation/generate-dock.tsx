@@ -29,6 +29,7 @@ import {
   type GenerateMode,
 } from "@/lib/generation/presets";
 import { parseAtMentions } from "@/lib/generation/prompt";
+import { saveOutputToGallery } from "@/lib/outputs/client";
 import "./generate-dock.css";
 
 type Slot =
@@ -64,8 +65,12 @@ async function downloadAsset(url: string, filename: string) {
 
 export function GenerateDock({
   initialModelId,
+  initialMode,
+  initialSourceUrl,
 }: {
   initialModelId?: string | null;
+  initialMode?: GenerateMode | null;
+  initialSourceUrl?: string | null;
 }) {
   const [creatorModels, setCreatorModels] = useState<CreatorModel[]>([]);
   const [creatorId, setCreatorId] = useState<string | null>(
@@ -73,7 +78,9 @@ export function GenerateDock({
   );
   const creator = creatorModels.find((m) => m.id === creatorId) ?? null;
 
-  const [mode, setMode] = useState<GenerateMode>("free");
+  const [mode, setMode] = useState<GenerateMode>(
+    initialMode ?? (initialSourceUrl ? "recreate" : "free")
+  );
   const [prompt, setPrompt] = useState("");
   const [enhance, setEnhance] = useState(true);
   const [share, setShare] = useState(false);
@@ -86,7 +93,7 @@ export function GenerateDock({
     PRESET_QUALITY[1]?.id ?? "seedream-5-pro"
   );
   const [keepPose, setKeepPose] = useState(true);
-  const [sourceUrl, setSourceUrl] = useState("");
+  const [sourceUrl, setSourceUrl] = useState(initialSourceUrl ?? "");
   const [clothing, setClothing] = useState<"model" | "source" | "external">(
     "model"
   );
@@ -320,9 +327,31 @@ export function GenerateDock({
       }
 
       const urls = await Promise.all(tasks);
+      const selectedModelId =
+        mode === "presets" ? presetQuality : genModelId;
+      const selectedModel = IMAGE_MODELS.find((m) => m.id === selectedModelId);
+      const persisted = await Promise.all(
+        urls.map((url) =>
+          saveOutputToGallery({
+            kind: "image",
+            sourceUrl: url,
+            prompt: enhanceJson.prompt,
+            modelId: selectedModelId,
+            modelLabel: selectedModel?.label,
+            creatorModelId: creatorId,
+            aspect: ratio,
+            resolution,
+          })
+        )
+      );
       setSlots((prev) =>
         prev.map((s, i) =>
-          i < urls.length ? { state: "done", url: urls[i] } : s
+          i < urls.length
+            ? {
+                state: "done",
+                url: persisted[i]?.publicUrl || urls[i],
+              }
+            : s
         )
       );
     } catch (err) {
@@ -379,6 +408,12 @@ export function GenerateDock({
                     <Clapperboard className="h-3.5 w-3.5" />
                     Send to video
                     <ArrowRight className="h-3.5 w-3.5" />
+                  </Link>
+                  <Link
+                    href="/content/outputs"
+                    className="inline-flex items-center gap-1.5 rounded-full border border-white/30 bg-black/40 px-3 py-1.5 text-xs font-medium text-white"
+                  >
+                    Outputs
                   </Link>
                 </div>
               </>

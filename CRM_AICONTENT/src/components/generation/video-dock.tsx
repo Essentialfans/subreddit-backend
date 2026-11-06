@@ -23,6 +23,7 @@ import {
 } from "@/lib/kie/models";
 import type { CreatorModel } from "@/lib/models/types";
 import { RATIO_OPTIONS } from "@/lib/generation/presets";
+import { saveOutputToGallery } from "@/lib/outputs/client";
 import "./generate-dock.css";
 
 type Slot =
@@ -284,7 +285,17 @@ export function VideoDock({
       }
 
       const url = await pollVideoTask(created.taskId);
-      setSlot({ state: "done", url });
+      const persisted = await saveOutputToGallery({
+        kind: "video",
+        sourceUrl: url,
+        prompt: finalPrompt,
+        modelId: videoModel.id,
+        modelLabel: videoModel.label,
+        creatorModelId: creatorId,
+        aspect: ratio,
+        resolution: showResolution ? resolution : undefined,
+      });
+      setSlot({ state: "done", url: persisted?.publicUrl || url });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Video failed";
       setError(message);
@@ -310,7 +321,7 @@ export function VideoDock({
                 controls
                 className="h-full w-full bg-black object-contain"
               />
-              <div className="pointer-events-none absolute inset-x-0 bottom-14 z-10 flex justify-center opacity-100 transition md:opacity-0 md:group-hover:opacity-100">
+              <div className="pointer-events-none absolute inset-x-0 bottom-14 z-10 flex flex-wrap justify-center gap-2 opacity-100">
                 <button
                   type="button"
                   onClick={() =>
@@ -324,6 +335,12 @@ export function VideoDock({
                   <Download className="h-3.5 w-3.5" />
                   Download
                 </button>
+                <Link
+                  href="/content/outputs"
+                  className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-white/30 bg-black/40 px-3 py-1.5 text-xs font-medium text-white"
+                >
+                  Outputs
+                </Link>
               </div>
             </div>
           ) : slot.state === "error" ? (
