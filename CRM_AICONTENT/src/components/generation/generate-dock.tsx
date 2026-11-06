@@ -7,6 +7,7 @@ import {
   Check,
   ChevronDown,
   Clapperboard,
+  Download,
   Loader2,
   Minus,
   Plus,
@@ -40,6 +41,24 @@ function RatioIcon({ id }: { id: string }) {
   if (id === "9:16" || id === "4:5" || id === "3:4")
     return <Smartphone className="h-3.5 w-3.5" />;
   return <Monitor className="h-3.5 w-3.5" />;
+}
+
+async function downloadAsset(url: string, filename: string) {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("fetch failed");
+    const blob = await res.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = objectUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(objectUrl);
+  } catch {
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
 }
 
 export function GenerateDock({
@@ -193,6 +212,12 @@ export function GenerateDock({
       setError("Select a model from My Models first.");
       return;
     }
+    if (creator && creator.refs.length === 0) {
+      setError(
+        `${creator.name} has no reference photos yet. Upload face refs in My Models so likeness can stick.`
+      );
+      return;
+    }
     if (mode === "recreate" && !sourceUrl.trim()) {
       setError("Recreate needs a source image URL or upload.");
       return;
@@ -313,7 +338,20 @@ export function GenerateDock({
                   alt=""
                   className="h-full w-full object-cover"
                 />
-                <div className="absolute inset-x-0 bottom-0 z-10 flex justify-center bg-gradient-to-t from-black/80 to-transparent p-3 opacity-100 transition md:opacity-0 md:group-hover:opacity-100">
+                <div className="absolute inset-x-0 bottom-0 z-10 flex flex-wrap items-center justify-center gap-2 bg-gradient-to-t from-black/80 to-transparent p-3 opacity-100 transition md:opacity-0 md:group-hover:opacity-100">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void downloadAsset(
+                        slot.url,
+                        `${creator?.slug || "image"}-${i + 1}.png`
+                      )
+                    }
+                    className="inline-flex items-center gap-1.5 rounded-full bg-white/95 px-3 py-1.5 text-xs font-semibold text-zinc-900 shadow"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    Download
+                  </button>
                   <Link
                     href={`/video/single?image=${encodeURIComponent(slot.url)}${
                       creatorId ? `&model=${creatorId}` : ""

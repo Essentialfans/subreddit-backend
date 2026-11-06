@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Check,
   ChevronDown,
+  Download,
   ImageIcon,
   Loader2,
   Plus,
@@ -37,6 +38,24 @@ function RatioIcon({ id }: { id: string }) {
   if (id === "9:16" || id === "4:5" || id === "3:4")
     return <Smartphone className="h-3.5 w-3.5" />;
   return <Monitor className="h-3.5 w-3.5" />;
+}
+
+async function downloadAsset(url: string, filename: string) {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("fetch failed");
+    const blob = await res.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = objectUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(objectUrl);
+  } catch {
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
 }
 
 export function VideoDock({
@@ -285,11 +304,28 @@ export function VideoDock({
               <span className="text-sm">Generating video…</span>
             </div>
           ) : slot.state === "done" ? (
-            <video
-              src={slot.url}
-              controls
-              className="h-full w-full bg-black object-contain"
-            />
+            <div className="group relative h-full w-full">
+              <video
+                src={slot.url}
+                controls
+                className="h-full w-full bg-black object-contain"
+              />
+              <div className="pointer-events-none absolute inset-x-0 bottom-14 z-10 flex justify-center opacity-100 transition md:opacity-0 md:group-hover:opacity-100">
+                <button
+                  type="button"
+                  onClick={() =>
+                    void downloadAsset(
+                      slot.url,
+                      `${creator?.slug || "video"}-clip.mp4`
+                    )
+                  }
+                  className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full bg-white/95 px-3 py-1.5 text-xs font-semibold text-zinc-900 shadow"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  Download
+                </button>
+              </div>
+            </div>
           ) : slot.state === "error" ? (
             <p className="px-6 text-center text-sm text-accent-red">
               {slot.message}

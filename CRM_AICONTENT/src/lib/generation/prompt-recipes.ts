@@ -31,10 +31,12 @@ export interface RecipeContext {
 }
 
 function identityLine(ctx: RecipeContext): string {
-  if (ctx.modelName?.trim()) {
-    return `Featuring ${ctx.modelName.trim()} as the sole subject, matching reference identity and facial likeness.`;
+  if (!ctx.modelName?.trim()) return "";
+  const name = ctx.modelName.trim();
+  if (ctx.hasImage) {
+    return `Featuring ${name} as the sole subject. Keep ${name}'s exact face, age, hair, skin tone, and body from the reference images — do not invent a different person, do not age or youth-ify them. Only change wardrobe, pose, and scene as directed.`;
   }
-  return "";
+  return `Featuring ${name} as the sole subject, matching reference identity and facial likeness.`;
 }
 
 function refsLine(ctx: RecipeContext): string {
@@ -58,14 +60,14 @@ const IMAGE_DEFAULT: PromptRecipe = {
   label: "Image (general)",
   formulaName: "Subject + Scene + Light + Style",
   structure: ["subject", "scene", "lighting", "style", "quality"],
-  systemPrompt: `You rewrite short human image prompts into clear photoreal still prompts.
-Structure: subject (who/what + details) → scene → lighting → style → quality cues.
-Keep under 90 words. No camera moves (this is a still). Return ONLY the prompt.`,
+  systemPrompt: `You rewrite short human image prompts into clear photoreal still prompts for character-consistent generation.
+When a named talent and reference images are provided, the subject MUST stay that exact person (same face, age, hair). Never invent a different age/ethnicity/appearance from the scene. Scene and wardrobe may change; identity may not.
+Structure: identity lock → scene/action → lighting → style → quality. Keep under 90 words. No camera moves. Return ONLY the prompt.`,
   fallbackExpand: (userText, ctx) =>
     joinParts(
       identityLine(ctx),
       userText
-        ? `Creative direction: ${userText}.`
+        ? `Creative direction: ${userText.replace(/@[a-zA-Z0-9_-]+/g, "").trim()}.`
         : "Tasteful lifestyle portrait, vertical framing.",
       "Photoreal, clean lighting, sharp facial detail, natural skin texture.",
       refsLine(ctx)
@@ -447,9 +449,9 @@ const IMAGE_RECIPES: Record<string, PromptRecipe> = {
     ...IMAGE_DEFAULT,
     id: "nano-banana-pro",
     label: "Nano Banana Pro",
-    systemPrompt: `You rewrite prompts for Google Nano Banana Pro stills.
-Emphasize sharp facial detail, clean composition, photoreal product/lifestyle look.
-Structure: subject → scene → light → style. Under 80 words. Return ONLY the prompt.`,
+    systemPrompt: `You rewrite prompts for Google Nano Banana Pro stills with reference identity images attached.
+CRITICAL: Keep the named talent's exact face/age/hair from the references. Do not invent an older or younger person from scene stereotypes (e.g. "farm" must NOT become elderly).
+Structure: identity lock → scene/wardrobe → light → style. Under 80 words. Return ONLY the prompt.`,
   },
   "nano-banana-2-1": {
     ...IMAGE_DEFAULT,
