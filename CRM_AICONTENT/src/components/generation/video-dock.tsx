@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Check,
   ChevronDown,
+  Download,
   ImageIcon,
   Loader2,
   Plus,
@@ -22,6 +23,10 @@ import {
 } from "@/lib/kie/models";
 import type { CreatorModel } from "@/lib/models/types";
 import { RATIO_OPTIONS } from "@/lib/generation/presets";
+import { uploadGenerationFile } from "@/lib/generation/upload-client";
+import { ensureStillFitsModel } from "@/lib/generation/prepare-media";
+import { saveOutputToGallery } from "@/lib/outputs/client";
+import { UploadProgressBar } from "@/components/generation/upload-progress";
 import "./generate-dock.css";
 
 type Slot =
@@ -37,6 +42,24 @@ function RatioIcon({ id }: { id: string }) {
   if (id === "9:16" || id === "4:5" || id === "3:4")
     return <Smartphone className="h-3.5 w-3.5" />;
   return <Monitor className="h-3.5 w-3.5" />;
+}
+
+async function downloadAsset(url: string, filename: string) {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("fetch failed");
+    const blob = await res.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = objectUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(objectUrl);
+  } catch {
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
 }
 
 export function VideoDock({
@@ -73,6 +96,9 @@ export function VideoDock({
   const [duration, setDuration] = useState(5);
   const [resolution, setResolution] = useState("720p");
   const [referenceUrl, setReferenceUrl] = useState(initialImageUrl ?? "");
+  const [motionVideoUrl, setMotionVideoUrl] = useState("");
+  const [stillUploadPct, setStillUploadPct] = useState<number | null>(null);
+  const [motionUploadPct, setMotionUploadPct] = useState<number | null>(null);
   const [audioUrl, setAudioUrl] = useState("");
   const [enhance, setEnhance] = useState(true);
   const [slot, setSlot] = useState<Slot>({ state: "empty" });
@@ -158,24 +184,6 @@ export function VideoDock({
   const showDuration = durationOptions.length > 0;
   const showResolution = resolutionOptions.length > 0;
 
-  async function uploadPublicFile(file: File): Promise<string> {
-    const form = new FormData();
-    form.append("file", file);
-    const res = await fetch("/api/generation/upload", {
-      method: "POST",
-      body: form,
-    });
-    const json = (await res.json()) as {
-      ok: boolean;
-      url?: string;
-      error?: string;
-    };
-    if (!res.ok || !json.ok || !json.url) {
-      throw new Error(json.error || "Upload failed");
-    }
-    return json.url;
-  }
-
   async function onGenerate() {
     setError("");
     if (!keyReady) {
@@ -192,11 +200,17 @@ export function VideoDock({
       );
       return;
     }
+    if (videoModel.requiresMotionVideo && !motionVideoUrl.trim()) {
+      setError(
+        `${videoModel.label} needs a motion-reference video (about 3–30s) that drives the movement.`
+      );
+      return;
+    }
     if (videoModel.requiresAudio && !audioUrl.trim()) {
       setError(`${videoModel.label} needs an audio URL.`);
       return;
     }
-    if (prompt.trim().length < 3) {
+    if (!videoModel.promptOptional && prompt.trim().length < 3) {
       setError("Add a short motion prompt.");
       return;
     }
@@ -206,7 +220,9 @@ export function VideoDock({
 
     try {
       let finalPrompt = prompt.trim();
-      if (enhance) {
+      // Wan Animate Move has no prompt field — skip enhance/identity text.
+      const acceptsPrompt = !videoModel.omitPrompt;
+      if (acceptsPrompt && enhance) {
         const enhanceRes = await fetch("/api/generation/enhance", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -214,7 +230,11 @@ export function VideoDock({
             mode: "free",
             userText: prompt,
             modelName: creator?.name,
-            enhanceWithAi: true,
+            modelId: videoModel.id,
+            enhanceWithAi: enhance,
+            hasImage: Boolean(referenceUrl.trim()),
+            durationSec: showDuration ? duration : null,
+            aspect: ratio,
             refLabels: referenceUrl ? ["source still"] : [],
           }),
         });
@@ -222,18 +242,43 @@ export function VideoDock({
           ok: boolean;
           prompt?: string;
           error?: string;
+          formulaName?: string;
         };
         if (enhanceRes.ok && enhanceJson.ok && enhanceJson.prompt) {
-          finalPrompt = `${enhanceJson.prompt} Animate as a short vertical video with natural motion.`;
+          // Recipe already includes motion/camera language for this model —
+          // do not append a generic video suffix (that would mix formats).
+          finalPrompt = enhanceJson.prompt;
         }
-      } else if (creator?.name) {
+      } else if (acceptsPrompt && creator?.name) {
         finalPrompt = `${finalPrompt} Featuring ${creator.name}, matching reference identity.`;
+      } else if (!acceptsPrompt) {
+        finalPrompt = "";
       }
 
-      const imageUrls = [
-        ...(referenceUrl ? [referenceUrl] : []),
-        ...(creator?.refs.map((r) => r.publicUrl) ?? []),
-      ];
+      // Motion-control APIs take exactly one still; prompting models can use identity refs too.
+      let stillUrl = referenceUrl.trim();
+      if (videoModel.requiresMotionVideo && stillUrl) {
+        const prepared = await ensureStillFitsModel({
+          url: stillUrl,
+          modelId: videoModel.id,
+        });
+        if (prepared.compressed && prepared.blob) {
+          // Generated stills (often ~8MB PNG) exceed Wan Animate’s 5MB cap.
+          stillUrl = await uploadGenerationFile(
+            new File([prepared.blob], "still.jpg", { type: "image/jpeg" })
+          );
+          setReferenceUrl(stillUrl);
+        }
+      }
+
+      const imageUrls = videoModel.requiresMotionVideo
+        ? stillUrl
+          ? [stillUrl]
+          : []
+        : [
+            ...(stillUrl ? [stillUrl] : []),
+            ...(creator?.refs.map((r) => r.publicUrl) ?? []),
+          ];
 
       const createRes = await fetch("/api/generation/create", {
         method: "POST",
@@ -245,6 +290,7 @@ export function VideoDock({
           duration: showDuration ? duration : undefined,
           resolution: showResolution ? resolution : undefined,
           imageUrls,
+          videoUrl: motionVideoUrl.trim() || null,
           audioUrl: audioUrl.trim() || null,
         }),
       });
@@ -258,9 +304,32 @@ export function VideoDock({
       }
 
       const url = await pollVideoTask(created.taskId);
-      setSlot({ state: "done", url });
+      try {
+        const persisted = await saveOutputToGallery({
+          kind: "video",
+          sourceUrl: url,
+          prompt: finalPrompt,
+          modelId: videoModel.id,
+          modelLabel: videoModel.label,
+          creatorModelId: creatorId,
+          aspect: ratio,
+          resolution: showResolution ? resolution : undefined,
+        });
+        setSlot({ state: "done", url: persisted.publicUrl });
+      } catch (saveErr) {
+        setSlot({ state: "done", url });
+        setError(
+          `Video ready, but Outputs save failed: ${
+            saveErr instanceof Error ? saveErr.message : "unknown error"
+          }`
+        );
+      }
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Video failed";
+      let message = err instanceof Error ? err.message : "Video failed";
+      if (/^internal error$/i.test(message.trim())) {
+        message =
+          "kie.ai returned Internal Error — check the still (≤5MB jpeg/png) and motion clip (mp4/mov) are public URLs kie can fetch, then re-upload and retry.";
+      }
       setError(message);
       setSlot({ state: "error", message });
     } finally {
@@ -278,11 +347,34 @@ export function VideoDock({
               <span className="text-sm">Generating video…</span>
             </div>
           ) : slot.state === "done" ? (
-            <video
-              src={slot.url}
-              controls
-              className="h-full w-full bg-black object-contain"
-            />
+            <div className="group relative h-full w-full">
+              <video
+                src={slot.url}
+                controls
+                className="h-full w-full bg-black object-contain"
+              />
+              <div className="pointer-events-none absolute inset-x-0 bottom-14 z-10 flex flex-wrap justify-center gap-2 opacity-100">
+                <button
+                  type="button"
+                  onClick={() =>
+                    void downloadAsset(
+                      slot.url,
+                      `${creator?.slug || "video"}-clip.mp4`
+                    )
+                  }
+                  className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full bg-white/95 px-3 py-1.5 text-xs font-semibold text-zinc-900 shadow"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  Download
+                </button>
+                <Link
+                  href="/content/outputs"
+                  className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-white/30 bg-black/40 px-3 py-1.5 text-xs font-medium text-white"
+                >
+                  Outputs
+                </Link>
+              </div>
+            </div>
           ) : slot.state === "error" ? (
             <p className="px-6 text-center text-sm text-accent-red">
               {slot.message}
@@ -485,29 +577,44 @@ export function VideoDock({
 
           <div className="space-y-1">
             <p className="gen-label">Source still</p>
-            <div className="flex items-center gap-2">
-              <label className="gen-chip cursor-pointer">
-                <Plus className="h-4 w-4" />
-                Upload
+            <div className="flex flex-wrap items-center gap-2">
+              <label
+                className="gen-chip cursor-pointer"
+                aria-disabled={stillUploadPct !== null}
+              >
+                {stillUploadPct !== null ? (
+                  `Uploading ${stillUploadPct}%`
+                ) : (
+                  <>
+                    <Plus className="h-4 w-4" />
+                    Upload
+                  </>
+                )}
                 <input
                   type="file"
                   accept="image/*"
                   className="hidden"
+                  disabled={stillUploadPct !== null}
                   onChange={(e) => {
                     const f = e.target.files?.[0];
                     if (!f) return;
-                    void uploadPublicFile(f)
+                    setStillUploadPct(0);
+                    setError("");
+                    void uploadGenerationFile(f, setStillUploadPct)
                       .then(setReferenceUrl)
                       .catch((err) =>
                         setError(
                           err instanceof Error ? err.message : "Upload failed"
                         )
-                      );
+                      )
+                      .finally(() => setStillUploadPct(null));
                     e.target.value = "";
                   }}
                 />
               </label>
-              {!referenceUrl ? (
+              {stillUploadPct !== null ? (
+                <UploadProgressBar pct={stillUploadPct} label="Uploading still…" />
+              ) : !referenceUrl ? (
                 <span className="text-xs text-muted-foreground">
                   or Send to video from Image Generation
                 </span>
@@ -520,22 +627,105 @@ export function VideoDock({
 
         <div className="relative">
           <input
-            className="gen-prompt pr-[170px]"
+            className={cn(
+              "gen-prompt",
+              videoModel?.omitPrompt ? "opacity-60" : "pr-[170px]"
+            )}
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
-            placeholder="Describe the motion… slow push-in, hair in wind, cinematic lights…"
+            disabled={Boolean(videoModel?.omitPrompt)}
+            placeholder={
+              videoModel?.omitPrompt
+                ? "No prompt needed — motion comes from your reference video"
+                : "Describe the motion… slow push-in, hair in wind, cinematic lights…"
+            }
           />
-          <div className="absolute right-3 top-1/2 flex -translate-y-1/2 items-center gap-2 text-xs text-muted-foreground">
-            Enhance with AI
-            <button
-              type="button"
-              className="gen-toggle"
-              data-on={enhance}
-              onClick={() => setEnhance((v) => !v)}
-              aria-label="Enhance with AI"
-            />
-          </div>
+          {videoModel?.omitPrompt ? null : (
+            <div className="absolute right-3 top-1/2 flex -translate-y-1/2 items-center gap-2 text-xs text-muted-foreground">
+              Enhance with AI
+              <button
+                type="button"
+                className="gen-toggle"
+                data-on={enhance}
+                onClick={() => setEnhance((v) => !v)}
+                aria-label="Enhance with AI"
+              />
+            </div>
+          )}
         </div>
+
+        {videoModel?.requiresMotionVideo ? (
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="space-y-1">
+              <p className="gen-label">Motion reference</p>
+              <label
+                className="gen-chip cursor-pointer"
+                aria-disabled={motionUploadPct !== null}
+                data-busy={motionUploadPct !== null}
+              >
+                {motionUploadPct !== null
+                  ? `Uploading ${motionUploadPct}%`
+                  : "+ Upload video"}
+                <input
+                  type="file"
+                  accept="video/mp4,video/quicktime,video/*"
+                  className="hidden"
+                  disabled={motionUploadPct !== null}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (!f) return;
+                    setMotionUploadPct(0);
+                    setError("");
+                    void uploadGenerationFile(f, setMotionUploadPct)
+                      .then((url) => {
+                        setMotionVideoUrl(url);
+                        setError("");
+                      })
+                      .catch((err) =>
+                        setError(
+                          err instanceof Error
+                            ? err.message
+                            : "Motion video upload failed"
+                        )
+                      )
+                      .finally(() => setMotionUploadPct(null));
+                    e.target.value = "";
+                  }}
+                />
+              </label>
+            </div>
+            {motionUploadPct !== null ? (
+              <UploadProgressBar
+                pct={motionUploadPct}
+                label="Uploading motion video…"
+              />
+            ) : motionVideoUrl ? (
+              <span className="text-xs text-accent-green">
+                Motion video attached
+              </span>
+            ) : (
+              <span className="text-xs text-muted-foreground">
+                Required — drives pose/movement (about 3–30s)
+              </span>
+            )}
+            {motionUploadPct !== null ? null : motionVideoUrl ? (
+              <button
+                type="button"
+                className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+                onClick={() => setMotionVideoUrl("")}
+              >
+                Clear
+              </button>
+            ) : (
+              <input
+                className="gen-prompt min-w-[220px] flex-1"
+                value={motionVideoUrl}
+                onChange={(e) => setMotionVideoUrl(e.target.value.trim())}
+                placeholder="Or paste motion video URL (https://…/clip.mp4)"
+              />
+            )}
+          </div>
+        ) : null}
 
         {videoModel?.requiresAudio ? (
           <input
@@ -663,8 +853,8 @@ export function VideoDock({
             </div>
           ) : videoModel?.durationNote ? (
             <div className="space-y-1">
-              <p className="gen-label">Duration</p>
-              <p className="max-w-[220px] text-xs text-muted-foreground">
+              <p className="gen-label">Length</p>
+              <p className="max-w-[240px] text-xs leading-snug text-muted-foreground">
                 {videoModel.durationNote}
               </p>
             </div>

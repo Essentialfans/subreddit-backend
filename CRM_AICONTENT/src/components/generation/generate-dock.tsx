@@ -7,6 +7,7 @@ import {
   Check,
   ChevronDown,
   Clapperboard,
+  Download,
   Loader2,
   Minus,
   Plus,
@@ -14,6 +15,7 @@ import {
   Square,
   Smartphone,
   Monitor,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { IMAGE_MODELS } from "@/lib/kie/models";
@@ -27,6 +29,9 @@ import {
   type GenerateMode,
 } from "@/lib/generation/presets";
 import { parseAtMentions } from "@/lib/generation/prompt";
+import { uploadGenerationFile } from "@/lib/generation/upload-client";
+import { saveOutputToGallery } from "@/lib/outputs/client";
+import { UploadProgressBar } from "@/components/generation/upload-progress";
 import "./generate-dock.css";
 
 type Slot =
@@ -42,10 +47,32 @@ function RatioIcon({ id }: { id: string }) {
   return <Monitor className="h-3.5 w-3.5" />;
 }
 
+async function downloadAsset(url: string, filename: string) {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("fetch failed");
+    const blob = await res.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = objectUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(objectUrl);
+  } catch {
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+}
+
 export function GenerateDock({
   initialModelId,
+  initialMode,
+  initialSourceUrl,
 }: {
   initialModelId?: string | null;
+  initialMode?: GenerateMode | null;
+  initialSourceUrl?: string | null;
 }) {
   const [creatorModels, setCreatorModels] = useState<CreatorModel[]>([]);
   const [creatorId, setCreatorId] = useState<string | null>(
@@ -53,7 +80,9 @@ export function GenerateDock({
   );
   const creator = creatorModels.find((m) => m.id === creatorId) ?? null;
 
-  const [mode, setMode] = useState<GenerateMode>("free");
+  const [mode, setMode] = useState<GenerateMode>(
+    initialMode ?? (initialSourceUrl ? "recreate" : "free")
+  );
   const [prompt, setPrompt] = useState("");
   const [enhance, setEnhance] = useState(true);
   const [share, setShare] = useState(false);
@@ -66,11 +95,18 @@ export function GenerateDock({
     PRESET_QUALITY[1]?.id ?? "seedream-5-pro"
   );
   const [keepPose, setKeepPose] = useState(true);
-  const [sourceUrl, setSourceUrl] = useState("");
+  const [sourceUrl, setSourceUrl] = useState(initialSourceUrl ?? "");
   const [clothing, setClothing] = useState<"model" | "source" | "external">(
     "model"
   );
+  const [externalClothingUrl, setExternalClothingUrl] = useState("");
+  const [showSourceUrlField, setShowSourceUrlField] = useState(false);
   const [extraRefs, setExtraRefs] = useState<string[]>([]);
+  const [refUploadPct, setRefUploadPct] = useState<number | null>(null);
+  const [sourceUploadPct, setSourceUploadPct] = useState<number | null>(null);
+  const [clothingUploadPct, setClothingUploadPct] = useState<number | null>(
+    null
+  );
   const [slots, setSlots] = useState<Slot[]>([
     { state: "empty" },
     { state: "empty" },
@@ -149,38 +185,53 @@ export function GenerateDock({
         mode === "presets"
           ? presetQuality
           : mode === "recreate"
-            ? "seedream-5-pro"
+            ? "nano-banana-pro"
             : activeGenModels[0]?.id;
       if (fallback) setGenModelId(fallback);
     }
   }, [mode, activeGenModels, genModelId, presetQuality]);
 
-  async function uploadPublicFile(file: File): Promise<string> {
-    const form = new FormData();
-    form.append("file", file);
-    const res = await fetch("/api/generation/upload", {
-      method: "POST",
-      body: form,
-    });
-    const json = (await res.json()) as {
-      ok: boolean;
-      url?: string;
-      error?: string;
-    };
-    if (!res.ok || !json.ok || !json.url) {
-      throw new Error(json.error || "Upload failed");
-    }
-    return json.url;
-  }
-
   async function onUploadRef(file: File) {
-    if (extraRefs.length >= 4) return;
+    if (extraRefs.length >= 4 || refUploadPct !== null) return;
+    setRefUploadPct(0);
+    setError("");
     try {
-      const url = await uploadPublicFile(file);
+      const url = await uploadGenerationFile(file, setRefUploadPct);
       setExtraRefs((prev) => [...prev, url].slice(0, 4));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ref upload failed");
+    } finally {
+      setRefUploadPct(null);
     }
+  }
+
+  function uploadSource(file: File) {
+    if (sourceUploadPct !== null) return;
+    setSourceUploadPct(0);
+    setError("");
+    void uploadGenerationFile(file, setSourceUploadPct)
+      .then((url) => {
+        setSourceUrl(url);
+        setShowSourceUrlField(false);
+      })
+      .catch((err) =>
+        setError(err instanceof Error ? err.message : "Source upload failed")
+      )
+      .finally(() => setSourceUploadPct(null));
+  }
+
+  function uploadClothing(file: File) {
+    if (clothingUploadPct !== null) return;
+    setClothingUploadPct(0);
+    setError("");
+    void uploadGenerationFile(file, setClothingUploadPct)
+      .then(setExternalClothingUrl)
+      .catch((err) =>
+        setError(
+          err instanceof Error ? err.message : "Clothing upload failed"
+        )
+      )
+      .finally(() => setClothingUploadPct(null));
   }
 
   async function onGenerate() {
@@ -193,8 +244,18 @@ export function GenerateDock({
       setError("Select a model from My Models first.");
       return;
     }
+    if (creator && creator.refs.length === 0) {
+      setError(
+        `${creator.name} has no reference photos yet. Upload face refs in My Models so likeness can stick.`
+      );
+      return;
+    }
     if (mode === "recreate" && !sourceUrl.trim()) {
-      setError("Recreate needs a source image URL or upload.");
+      setError("Recreate needs a source image — upload one or paste a URL.");
+      return;
+    }
+    if (mode === "recreate" && clothing === "external" && !externalClothingUrl.trim()) {
+      setError("Clothing is set to External — upload a clothing reference image.");
       return;
     }
 
@@ -203,6 +264,8 @@ export function GenerateDock({
     const refLabels = [
       ...mentions.refTags,
       ...extraRefs.map((_, i) => `ref${i + 1}`),
+      ...(mode === "recreate" ? ["source"] : []),
+      ...(clothing === "external" && externalClothingUrl ? ["clothing"] : []),
     ];
 
     setBusy(true);
@@ -211,6 +274,8 @@ export function GenerateDock({
     );
 
     try {
+      const hasSource = mode === "recreate" && Boolean(sourceUrl.trim());
+      const identityUrls = creator?.refs.map((r) => r.publicUrl) ?? [];
       const enhanceRes = await fetch("/api/generation/enhance", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -218,8 +283,15 @@ export function GenerateDock({
           mode,
           userText: prompt,
           modelName: creator?.name,
-          presetHint: preset?.promptHint,
+          modelId: mode === "presets" ? presetQuality : genModelId,
+          presetHint: mode === "presets" ? preset?.promptHint : undefined,
           enhanceWithAi: enhance || mode !== "free",
+          hasImage: Boolean(
+            hasSource || identityUrls.length > 0 || extraRefs.length > 0
+          ),
+          hasSourceImage: hasSource,
+          clothing: mode === "recreate" ? clothing : null,
+          aspect: ratio,
           refLabels,
           keepPose,
         }),
@@ -234,12 +306,19 @@ export function GenerateDock({
       }
       setExpandedPrompt(enhanceJson.prompt);
 
-      const identityUrls = creator?.refs.map((r) => r.publicUrl) ?? [];
-        const imageUrls = [
-        ...(mode === "recreate" && sourceUrl ? [sourceUrl] : []),
-        ...identityUrls,
-        ...extraRefs,
-      ];
+      // Recreate image order (identity-first so body comes from My Model):
+      // 1) identity face+body refs  2) optional external clothing  3) SOURCE last (pose/scene only)
+      const imageUrls =
+        mode === "recreate"
+          ? [
+              ...identityUrls,
+              ...extraRefs,
+              ...(clothing === "external" && externalClothingUrl.trim()
+                ? [externalClothingUrl.trim()]
+                : []),
+              sourceUrl.trim(),
+            ].filter(Boolean)
+          : [...identityUrls, ...extraRefs];
 
       const tasks: Promise<string>[] = [];
       for (let i = 0; i < quantity; i++) {
@@ -270,11 +349,43 @@ export function GenerateDock({
       }
 
       const urls = await Promise.all(tasks);
+      const selectedModelId =
+        mode === "presets" ? presetQuality : genModelId;
+      const selectedModel = IMAGE_MODELS.find((m) => m.id === selectedModelId);
+      const displayUrls: string[] = [];
+      const saveErrors: string[] = [];
+      for (const url of urls) {
+        try {
+          const saved = await saveOutputToGallery({
+            kind: "image",
+            sourceUrl: url,
+            prompt: enhanceJson.prompt,
+            modelId: selectedModelId,
+            modelLabel: selectedModel?.label,
+            creatorModelId: creatorId,
+            aspect: ratio,
+            resolution,
+          });
+          displayUrls.push(saved.publicUrl);
+        } catch (saveErr) {
+          displayUrls.push(url);
+          saveErrors.push(
+            saveErr instanceof Error ? saveErr.message : "Outputs save failed"
+          );
+        }
+      }
       setSlots((prev) =>
         prev.map((s, i) =>
-          i < urls.length ? { state: "done", url: urls[i] } : s
+          i < displayUrls.length
+            ? { state: "done", url: displayUrls[i] }
+            : s
         )
       );
+      if (saveErrors.length) {
+        setError(
+          `Image ready, but Outputs save failed: ${saveErrors[0]}. Open Content → Outputs after regenerating.`
+        );
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Generation failed";
       setError(message);
@@ -306,7 +417,20 @@ export function GenerateDock({
                   alt=""
                   className="h-full w-full object-cover"
                 />
-                <div className="absolute inset-x-0 bottom-0 z-10 flex justify-center bg-gradient-to-t from-black/80 to-transparent p-3 opacity-100 transition md:opacity-0 md:group-hover:opacity-100">
+                <div className="absolute inset-x-0 bottom-0 z-10 flex flex-wrap items-center justify-center gap-2 bg-gradient-to-t from-black/80 to-transparent p-3">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void downloadAsset(
+                        slot.url,
+                        `${creator?.slug || "image"}-${i + 1}.png`
+                      )
+                    }
+                    className="inline-flex items-center gap-1.5 rounded-full bg-white/95 px-3 py-1.5 text-xs font-semibold text-zinc-900 shadow"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    Download
+                  </button>
                   <Link
                     href={`/video/single?image=${encodeURIComponent(slot.url)}${
                       creatorId ? `&model=${creatorId}` : ""
@@ -316,6 +440,53 @@ export function GenerateDock({
                     <Clapperboard className="h-3.5 w-3.5" />
                     Send to video
                     <ArrowRight className="h-3.5 w-3.5" />
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void (async () => {
+                        try {
+                          const selectedModelId =
+                            mode === "presets" ? presetQuality : genModelId;
+                          const selectedModel = IMAGE_MODELS.find(
+                            (m) => m.id === selectedModelId
+                          );
+                          const saved = await saveOutputToGallery({
+                            kind: "image",
+                            sourceUrl: slot.url,
+                            prompt: expandedPrompt || prompt,
+                            modelId: selectedModelId,
+                            modelLabel: selectedModel?.label,
+                            creatorModelId: creatorId,
+                            aspect: ratio,
+                            resolution,
+                          });
+                          setSlots((prev) =>
+                            prev.map((s, idx) =>
+                              idx === i && s.state === "done"
+                                ? { state: "done", url: saved.publicUrl }
+                                : s
+                            )
+                          );
+                          setError("");
+                        } catch (saveErr) {
+                          setError(
+                            saveErr instanceof Error
+                              ? `Outputs save failed: ${saveErr.message}`
+                              : "Outputs save failed"
+                          );
+                        }
+                      })();
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-white/30 bg-black/40 px-3 py-1.5 text-xs font-medium text-white"
+                  >
+                    Save to Outputs
+                  </button>
+                  <Link
+                    href="/content/outputs"
+                    className="inline-flex items-center gap-1.5 rounded-full border border-white/30 bg-black/40 px-3 py-1.5 text-xs font-medium text-white"
+                  >
+                    Outputs
                   </Link>
                 </div>
               </>
@@ -484,13 +655,21 @@ export function GenerateDock({
                   </button>
                 ))}
               </div>
+              <p className="max-w-[220px] text-[10px] leading-snug text-muted-foreground">
+                Body always from My Model. Clothing picks outfit only
+                {clothing === "source"
+                  ? " (keep source outfit on model body)."
+                  : clothing === "external"
+                    ? " (upload outfit ref)."
+                    : " (use model’s usual look)."}
+              </p>
             </div>
           ) : null}
 
           {mode === "free" ? (
             <div className="space-y-1">
               <p className="gen-label">Refs</p>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 {extraRefs.map((url, i) => (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
@@ -502,11 +681,16 @@ export function GenerateDock({
                   />
                 ))}
                 <label className="gen-chip cursor-pointer">
-                  <Plus className="h-4 w-4" />
+                  {refUploadPct !== null ? (
+                    `${refUploadPct}%`
+                  ) : (
+                    <Plus className="h-4 w-4" />
+                  )}
                   <input
                     type="file"
                     accept="image/*"
                     className="hidden"
+                    disabled={refUploadPct !== null}
                     onChange={(e) => {
                       const f = e.target.files?.[0];
                       if (f) void onUploadRef(f);
@@ -514,6 +698,9 @@ export function GenerateDock({
                     }}
                   />
                 </label>
+                {refUploadPct !== null ? (
+                  <UploadProgressBar pct={refUploadPct} label="Uploading ref…" />
+                ) : null}
               </div>
             </div>
           ) : null}
@@ -521,51 +708,172 @@ export function GenerateDock({
 
         {/* Row 2 — prompt / recreate source */}
         {mode === "recreate" ? (
-          <div className="grid gap-3 md:grid-cols-[100px_1fr]">
-            <label className="flex h-[52px] cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-border bg-muted text-xs text-muted-foreground">
-              {sourceUrl ? "Source ✓" : "Source"}
-              <input
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (!f) return;
-                  void uploadPublicFile(f)
-                    .then(setSourceUrl)
-                    .catch((err) =>
-                      setError(
-                        err instanceof Error ? err.message : "Source upload failed"
-                      )
-                    );
-                  e.target.value = "";
-                }}
-              />
-            </label>
-            <div className="relative">
-              <input
-                className="gen-prompt pr-40"
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                placeholder="Extra guidance (optional)…"
-              />
-              <div className="absolute right-3 top-1/2 hidden -translate-y-1/2 items-center gap-2 text-xs text-muted-foreground sm:flex">
-                Keep pose
-                <button
-                  type="button"
-                  className="gen-toggle"
-                  data-on={keepPose}
-                  onClick={() => setKeepPose((v) => !v)}
-                  aria-label="Keep pose"
-                />
+          <div className="space-y-3">
+            <div className="grid gap-3 md:grid-cols-[112px_1fr]">
+              {sourceUrl && /^https?:\/\//i.test(sourceUrl) ? (
+                <div className="relative h-[112px] w-full overflow-hidden rounded-xl border border-border bg-muted md:w-[112px]">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={sourceUrl}
+                    alt="Source"
+                    className="h-full w-full object-cover"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSourceUrl("");
+                      setShowSourceUrlField(false);
+                    }}
+                    className="absolute right-1 top-1 rounded-full bg-black/70 p-1 text-white"
+                    aria-label="Remove source"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                  <label className="absolute inset-x-0 bottom-0 cursor-pointer bg-black/55 py-1 text-center text-[10px] font-medium text-white">
+                    {sourceUploadPct !== null
+                      ? `Uploading ${sourceUploadPct}%`
+                      : "Replace"}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      disabled={sourceUploadPct !== null}
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) uploadSource(f);
+                        e.target.value = "";
+                      }}
+                    />
+                  </label>
+                </div>
+              ) : (
+                <label className="flex h-[112px] cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-border bg-muted text-xs text-muted-foreground md:w-[112px]">
+                  {sourceUploadPct !== null ? (
+                    <>
+                      <span className="tabular-nums text-foreground">
+                        {sourceUploadPct}%
+                      </span>
+                      <span>Uploading…</span>
+                    </>
+                  ) : (
+                    <>
+                      <Plus className="h-4 w-4" />
+                      Source
+                    </>
+                  )}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    disabled={sourceUploadPct !== null}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) uploadSource(f);
+                      e.target.value = "";
+                    }}
+                  />
+                </label>
+              )}
+              <div className="relative flex flex-col gap-2">
+                <div className="relative">
+                  <input
+                    className="gen-prompt pr-40"
+                    value={prompt}
+                    onChange={(e) => setPrompt(e.target.value)}
+                    placeholder="Extra guidance (optional)…"
+                  />
+                  <div className="absolute right-3 top-1/2 hidden -translate-y-1/2 items-center gap-2 text-xs text-muted-foreground sm:flex">
+                    Keep pose
+                    <button
+                      type="button"
+                      className="gen-toggle"
+                      data-on={keepPose}
+                      onClick={() => setKeepPose((v) => !v)}
+                      aria-label="Keep pose"
+                    />
+                  </div>
+                </div>
+                {!sourceUrl || showSourceUrlField ? (
+                  <input
+                    className="gen-prompt"
+                    value={sourceUrl}
+                    onChange={(e) => setSourceUrl(e.target.value.trim())}
+                    onBlur={() => {
+                      if (/^https?:\/\//i.test(sourceUrl)) {
+                        setShowSourceUrlField(false);
+                      }
+                    }}
+                    placeholder="Or paste source image URL (https://…)"
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    className="self-start text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                    onClick={() => setShowSourceUrlField(true)}
+                  >
+                    Paste URL instead
+                  </button>
+                )}
+                {sourceUploadPct !== null ? (
+                  <UploadProgressBar
+                    pct={sourceUploadPct}
+                    label="Uploading source…"
+                  />
+                ) : null}
               </div>
             </div>
-            <input
-              className="gen-prompt md:col-span-2"
-              value={/^https?:\/\//i.test(sourceUrl) ? sourceUrl : ""}
-              onChange={(e) => setSourceUrl(e.target.value)}
-              placeholder="Or paste source image URL (https://…)"
-            />
+
+            {clothing === "external" ? (
+              <div className="flex flex-wrap items-center gap-3">
+                <p className="gen-label">External clothing</p>
+                {externalClothingUrl && /^https?:\/\//i.test(externalClothingUrl) ? (
+                  <div className="relative h-16 w-16 overflow-hidden rounded-lg border border-border">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={externalClothingUrl}
+                      alt="Clothing"
+                      className="h-full w-full object-cover"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setExternalClothingUrl("")}
+                      className="absolute right-0.5 top-0.5 rounded-full bg-black/70 p-0.5 text-white"
+                      aria-label="Remove clothing ref"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                ) : (
+                  <label className="gen-chip cursor-pointer">
+                    {clothingUploadPct !== null ? (
+                      `Uploading ${clothingUploadPct}%`
+                    ) : (
+                      <>
+                        <Plus className="h-4 w-4" />
+                        Upload outfit
+                      </>
+                    )}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      disabled={clothingUploadPct !== null}
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) uploadClothing(f);
+                        e.target.value = "";
+                      }}
+                    />
+                  </label>
+                )}
+                {clothingUploadPct !== null ? (
+                  <UploadProgressBar
+                    pct={clothingUploadPct}
+                    label="Uploading outfit…"
+                  />
+                ) : null}
+              </div>
+            ) : null}
           </div>
         ) : (
           <div className="relative">
