@@ -116,6 +116,9 @@ export async function POST(request: Request) {
     let message = error instanceof Error ? error.message : "Generation failed";
     if (/this field is required/i.test(message)) {
       message = `kie.ai rejected the request — a required field was missing (${message}). For Motion Control, upload both a source still and a motion-reference video.`;
+    } else if (/^internal error$/i.test(message.trim())) {
+      message =
+        "kie.ai returned Internal Error — usually the still/video URL can’t be fetched, the clip isn’t mp4/mov, the still is over ~5MB, or an unsupported field was sent. Re-upload the still + motion clip and try again.";
     }
     const status =
       message === "Unauthorized"

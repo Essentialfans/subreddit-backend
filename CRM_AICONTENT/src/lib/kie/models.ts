@@ -51,6 +51,8 @@ export interface KieModel {
   requiresMotionVideo?: boolean;
   /** Prompt is optional (motion APIs often drive from video alone) */
   promptOptional?: boolean;
+  /** Never send prompt — API schema has no prompt field (e.g. Wan Animate Move) */
+  omitPrompt?: boolean;
   /** Extra note shown under duration when special */
   durationNote?: string;
 }
@@ -469,6 +471,7 @@ export const VIDEO_MODELS: KieModel[] = [
     requiresImage: true,
     requiresMotionVideo: true,
     promptOptional: true,
+    omitPrompt: true,
     durationNote:
       "Clip length matches your motion-reference video. (Wan 3.0 is prompting-only — this is Wan Animate Move.)",
   },
@@ -548,10 +551,13 @@ export function buildKieInput(options: {
 
   const input: Record<string, unknown> = {};
   const trimmedPrompt = prompt.trim();
-  if (trimmedPrompt) {
-    input.prompt = trimmedPrompt;
-  } else if (!def.promptOptional) {
-    input.prompt = "";
+  // Wan Animate Move (and similar) reject unknown fields like prompt → "Internal Error".
+  if (!def.omitPrompt) {
+    if (trimmedPrompt) {
+      input.prompt = trimmedPrompt;
+    } else if (!def.promptOptional) {
+      input.prompt = "";
+    }
   }
 
   // Most market models accept aspect_ratio; Veo uses slightly different shapes.

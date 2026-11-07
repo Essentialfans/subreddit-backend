@@ -219,7 +219,9 @@ export function VideoDock({
 
     try {
       let finalPrompt = prompt.trim();
-      if (enhance) {
+      // Wan Animate Move has no prompt field — skip enhance/identity text.
+      const acceptsPrompt = !videoModel.omitPrompt;
+      if (acceptsPrompt && enhance) {
         const enhanceRes = await fetch("/api/generation/enhance", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -246,8 +248,10 @@ export function VideoDock({
           // do not append a generic video suffix (that would mix formats).
           finalPrompt = enhanceJson.prompt;
         }
-      } else if (creator?.name) {
+      } else if (acceptsPrompt && creator?.name) {
         finalPrompt = `${finalPrompt} Featuring ${creator.name}, matching reference identity.`;
+      } else if (!acceptsPrompt) {
+        finalPrompt = "";
       }
 
       // Motion-control APIs take exactly one still; prompting models can use identity refs too.
@@ -305,7 +309,11 @@ export function VideoDock({
         );
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Video failed";
+      let message = err instanceof Error ? err.message : "Video failed";
+      if (/^internal error$/i.test(message.trim())) {
+        message =
+          "kie.ai returned Internal Error — check the still (≤5MB jpeg/png) and motion clip (mp4/mov) are public URLs kie can fetch, then re-upload and retry.";
+      }
       setError(message);
       setSlot({ state: "error", message });
     } finally {
@@ -603,21 +611,31 @@ export function VideoDock({
 
         <div className="relative">
           <input
-            className="gen-prompt pr-[170px]"
+            className={cn(
+              "gen-prompt",
+              videoModel?.omitPrompt ? "opacity-60" : "pr-[170px]"
+            )}
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
-            placeholder="Describe the motion… slow push-in, hair in wind, cinematic lights…"
+            disabled={Boolean(videoModel?.omitPrompt)}
+            placeholder={
+              videoModel?.omitPrompt
+                ? "No prompt needed — motion comes from your reference video"
+                : "Describe the motion… slow push-in, hair in wind, cinematic lights…"
+            }
           />
-          <div className="absolute right-3 top-1/2 flex -translate-y-1/2 items-center gap-2 text-xs text-muted-foreground">
-            Enhance with AI
-            <button
-              type="button"
-              className="gen-toggle"
-              data-on={enhance}
-              onClick={() => setEnhance((v) => !v)}
-              aria-label="Enhance with AI"
-            />
-          </div>
+          {videoModel?.omitPrompt ? null : (
+            <div className="absolute right-3 top-1/2 flex -translate-y-1/2 items-center gap-2 text-xs text-muted-foreground">
+              Enhance with AI
+              <button
+                type="button"
+                className="gen-toggle"
+                data-on={enhance}
+                onClick={() => setEnhance((v) => !v)}
+                aria-label="Enhance with AI"
+              />
+            </div>
+          )}
         </div>
 
         {videoModel?.requiresMotionVideo ? (
