@@ -24,6 +24,7 @@ import {
 import type { CreatorModel } from "@/lib/models/types";
 import { RATIO_OPTIONS } from "@/lib/generation/presets";
 import { uploadGenerationFile } from "@/lib/generation/upload-client";
+import { ensureStillFitsModel } from "@/lib/generation/prepare-media";
 import { saveOutputToGallery } from "@/lib/outputs/client";
 import { UploadProgressBar } from "@/components/generation/upload-progress";
 import "./generate-dock.css";
@@ -255,12 +256,27 @@ export function VideoDock({
       }
 
       // Motion-control APIs take exactly one still; prompting models can use identity refs too.
+      let stillUrl = referenceUrl.trim();
+      if (videoModel.requiresMotionVideo && stillUrl) {
+        const prepared = await ensureStillFitsModel({
+          url: stillUrl,
+          modelId: videoModel.id,
+        });
+        if (prepared.compressed && prepared.blob) {
+          // Generated stills (often ~8MB PNG) exceed Wan Animate’s 5MB cap.
+          stillUrl = await uploadGenerationFile(
+            new File([prepared.blob], "still.jpg", { type: "image/jpeg" })
+          );
+          setReferenceUrl(stillUrl);
+        }
+      }
+
       const imageUrls = videoModel.requiresMotionVideo
-        ? referenceUrl
-          ? [referenceUrl]
+        ? stillUrl
+          ? [stillUrl]
           : []
         : [
-            ...(referenceUrl ? [referenceUrl] : []),
+            ...(stillUrl ? [stillUrl] : []),
             ...(creator?.refs.map((r) => r.publicUrl) ?? []),
           ];
 
