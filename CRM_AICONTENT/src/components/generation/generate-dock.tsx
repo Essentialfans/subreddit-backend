@@ -276,6 +276,13 @@ export function GenerateDock({
     try {
       const hasSource = mode === "recreate" && Boolean(sourceUrl.trim());
       const identityUrls = creator?.refs.map((r) => r.publicUrl) ?? [];
+      const activeGenId = mode === "presets" ? presetQuality : genModelId;
+      // Seedream i2i edits image_urls[0] — put SOURCE first so we edit the scene,
+      // then identity refs. Nano Banana prefers identity refs first.
+      const seedreamSourceFirst = activeGenId.startsWith("seedream");
+      const recreateImageOrder = seedreamSourceFirst
+        ? "source-first"
+        : "identity-first";
       const enhanceRes = await fetch("/api/generation/enhance", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -283,7 +290,7 @@ export function GenerateDock({
           mode,
           userText: prompt,
           modelName: creator?.name,
-          modelId: mode === "presets" ? presetQuality : genModelId,
+          modelId: activeGenId,
           presetHint: mode === "presets" ? preset?.promptHint : undefined,
           enhanceWithAi: enhance || mode !== "free",
           hasImage: Boolean(
@@ -294,6 +301,7 @@ export function GenerateDock({
           aspect: ratio,
           refLabels,
           keepPose,
+          recreateImageOrder,
         }),
       });
       const enhanceJson = (await enhanceRes.json()) as {
@@ -306,18 +314,28 @@ export function GenerateDock({
       }
       setExpandedPrompt(enhanceJson.prompt);
 
-      // Recreate image order (identity-first so body comes from My Model):
-      // 1) identity face+body refs  2) optional external clothing  3) SOURCE last (pose/scene only)
+      const clothingUrls =
+        clothing === "external" && externalClothingUrl.trim()
+          ? [externalClothingUrl.trim()]
+          : [];
+      // Recreate image order:
+      // - Seedream: SOURCE first (edit canvas), then identity (+ clothing)
+      // - Others: identity first, SOURCE last (pose/scene only)
       const imageUrls =
         mode === "recreate"
-          ? [
-              ...identityUrls,
-              ...extraRefs,
-              ...(clothing === "external" && externalClothingUrl.trim()
-                ? [externalClothingUrl.trim()]
-                : []),
-              sourceUrl.trim(),
-            ].filter(Boolean)
+          ? seedreamSourceFirst
+            ? [
+                sourceUrl.trim(),
+                ...identityUrls,
+                ...extraRefs,
+                ...clothingUrls,
+              ].filter(Boolean)
+            : [
+                ...identityUrls,
+                ...extraRefs,
+                ...clothingUrls,
+                sourceUrl.trim(),
+              ].filter(Boolean)
           : [...identityUrls, ...extraRefs];
 
       const tasks: Promise<string>[] = [];
@@ -663,7 +681,9 @@ export function GenerateDock({
                   : clothing === "external"
                     ? " (upload outfit ref)."
                     : " (use model’s usual look)."}{" "}
-                Captions/text on the source are removed in the output.
+                Captions/text on the source are removed. On Seedream, Keep pose
+                + Source clothing can still stick to the source face — retry if
+                needed, or try Nano Banana Pro for stronger identity swaps.
               </p>
             </div>
           ) : null}

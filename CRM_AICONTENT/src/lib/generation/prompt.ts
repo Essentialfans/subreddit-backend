@@ -23,6 +23,8 @@ export interface PromptBuildInput {
   clothing?: ClothingMode | null;
   durationSec?: number | null;
   aspect?: string | null;
+  /** Seedream prefers source-first; Nano prefers identity-first */
+  recreateImageOrder?: "identity-first" | "source-first";
   /** User's kie.ai key — required for live LLM enhance */
   kieApiKey?: string | null;
 }
@@ -47,6 +49,7 @@ function recipeContext(input: PromptBuildInput): RecipeContext {
     presetHint: input.presetHint,
     mode: input.mode,
     clothing: input.clothing,
+    recreateImageOrder: input.recreateImageOrder,
   };
 }
 
@@ -67,9 +70,15 @@ function buildUserMessage(input: PromptBuildInput, formulaName: string): string 
     );
   }
   if (input.mode === "recreate" || input.hasSourceImage) {
-    bits.push(
-      "RECREATE MODE (identity-first): The FIRST images are My Model identity refs — use that person's FULL body and face (age, hair, physique, proportions). The LAST image is the SOURCE for pose, camera, scene, and background ONLY."
-    );
+    if (input.recreateImageOrder === "source-first") {
+      bits.push(
+        "RECREATE MODE (Seedream source-first): Image 1 is SOURCE (pose/scene). Images 2+ are My Model identity (face+body). REPLACE the woman in Image 1 with the My Model from Images 2+."
+      );
+    } else {
+      bits.push(
+        "RECREATE MODE (identity-first): The FIRST images are My Model identity refs — use that person's FULL body and face (age, hair, physique, proportions). The LAST image is the SOURCE for pose, camera, scene, and background ONLY."
+      );
+    }
     bits.push(
       "CRITICAL: Generate a NEW photo. Do NOT keep the SOURCE woman's face or body. Replace the primary female / left woman with the My Model. Copying the source woman is a failure."
     );
@@ -120,7 +129,9 @@ function sealIdentity(prompt: string, ctx: RecipeContext): string {
   const parts: string[] = [];
   if (isRecreate && name) {
     parts.push(
-      `Identity-first recreate: the primary woman must be ${name}'s full body and face from the My Model identity refs — do NOT keep the SOURCE woman's face, body, age, or figure. SOURCE supplies pose/scene only.`
+      ctx.recreateImageOrder === "source-first"
+        ? `Identity-first recreate: Image 1 is SOURCE to edit; Images 2+ are ${name}. Replace the SOURCE woman with ${name}'s full body and face — do NOT keep the SOURCE woman's face or body.`
+        : `Identity-first recreate: the primary woman must be ${name}'s full body and face from the My Model identity refs — do NOT keep the SOURCE woman's face, body, age, or figure. SOURCE supplies pose/scene only.`
     );
   } else if (name) {
     parts.push(

@@ -22,6 +22,8 @@ export interface PromptRecipe {
 
 export type ClothingMode = "model" | "source" | "external";
 
+export type RecreateImageOrder = "identity-first" | "source-first";
+
 export interface RecipeContext {
   modelName?: string | null;
   refLabels?: string[];
@@ -34,6 +36,11 @@ export interface RecipeContext {
   presetHint?: string | null;
   mode?: "presets" | "recreate" | "free";
   clothing?: ClothingMode | null;
+  /**
+   * Seedream i2i edits image_urls[0] strongly — use source-first + numbered roles.
+   * Nano Banana prefers identity refs first.
+   */
+  recreateImageOrder?: RecreateImageOrder;
 }
 
 export function clothingInstruction(ctx: RecipeContext): string {
@@ -62,9 +69,13 @@ export function recreateFallback(userText: string, ctx: RecipeContext): string {
       : "Keep the SOURCE scene and setting; pose may adjust slightly.";
   const clothes = clothingInstruction(ctx);
   const extra = userText.replace(/@[a-zA-Z0-9_-]+/g, "").trim();
+  const sourceFirst = ctx.recreateImageOrder === "source-first";
+  const orderLine = sourceFirst
+    ? `Image roles: Image 1 is the SOURCE scene to edit. Images 2+ are ${name}'s My Model identity refs (face AND full body). REPLACE the woman in Image 1 with ${name} from Images 2+ — do not leave Image 1's woman unchanged.`
+    : `Image order: earlier images are ${name}'s My Model identity refs (face+body); the LAST image is SOURCE for pose/scene/background only.`;
   return joinParts(
-    `Generate a NEW photoreal photograph (not a light edit of SOURCE).`,
-    `Image order: earlier images are ${name}'s My Model identity refs (face+body); the LAST image is SOURCE for pose/scene/background only.`,
+    `Generate a NEW photoreal photograph of ${name} (not a copy or light edit of the SOURCE woman).`,
+    orderLine,
     `Identity-first recreate: the primary woman / female subject MUST be ${name} from the My Model identity references (face AND full body).`,
     `Use ${name}'s exact face, age, hair, skin tone, body shape, proportions, and physique from the identity images — those refs win over SOURCE.`,
     `CRITICAL: Do NOT keep the SOURCE woman's face, body, age, weight, ethnicity, or figure. Leaving the SOURCE woman unchanged is a failure.`,
@@ -532,18 +543,22 @@ Subject → composition → light → style. Return ONLY the prompt.`,
     ...IMAGE_DEFAULT,
     id: "seedream-5-pro",
     label: "Seedream 5.0 Pro",
-    systemPrompt: `You rewrite prompts for Seedream photoreal ads/thumbnails.
-Strong subject, punchy lighting, clear brand-safe composition. Return ONLY the prompt.`,
+    systemPrompt: `You rewrite prompts for Seedream 5 Pro image-to-image.
+Seedream strongly edits image_urls[0]. In recreate jobs: Image 1 is SOURCE pose/scene; Images 2+ are the named My Model identity. The output woman MUST be the My Model — never a copy of the SOURCE woman. State numbered image roles explicitly. Strip all SOURCE text/overlays. Under 120 words. Return ONLY the prompt.`,
   },
   "seedream-5-flash": {
     ...IMAGE_DEFAULT,
     id: "seedream-5-flash",
     label: "Seedream 5.0 Flash",
+    systemPrompt: `You rewrite prompts for Seedream Flash image-to-image.
+In recreate: Image 1 = SOURCE to edit; Images 2+ = My Model identity. Replace the SOURCE woman with the My Model. Strip captions. Return ONLY the prompt.`,
   },
   "seedream-4-5": {
     ...IMAGE_DEFAULT,
     id: "seedream-4-5",
     label: "Seedream 4.5",
+    systemPrompt: `You rewrite prompts for Seedream 4.5 image-to-image.
+In recreate: Image 1 = SOURCE; Images 2+ = My Model identity. Swap the woman to the My Model. Strip captions. Return ONLY the prompt.`,
   },
   "flux-3-klein": {
     ...IMAGE_DEFAULT,

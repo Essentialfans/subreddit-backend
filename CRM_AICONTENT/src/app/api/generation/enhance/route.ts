@@ -28,6 +28,7 @@ export async function POST(request: Request) {
       clothing?: "model" | "source" | "external" | null;
       durationSec?: number | null;
       aspect?: string | null;
+      recreateImageOrder?: "identity-first" | "source-first";
     };
 
     let kieApiKey: string | null = null;
@@ -53,6 +54,9 @@ export async function POST(request: Request) {
       clothing: body.clothing ?? null,
       durationSec: body.durationSec ?? catalog?.defaultDuration ?? null,
       aspect: body.aspect ?? catalog?.defaultAspect ?? null,
+      recreateImageOrder:
+        body.recreateImageOrder ??
+        (body.modelId?.startsWith("seedream") ? "source-first" : "identity-first"),
       kieApiKey,
     });
 
