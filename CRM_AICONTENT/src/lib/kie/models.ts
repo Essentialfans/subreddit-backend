@@ -7,7 +7,8 @@ export type ImageRefField =
   | "image_urls"
   | "image_input"
   | "reference_image_urls"
-  | "input_urls";
+  | "input_urls"
+  | "first_frame_url";
 
 export type VideoRefField = "video_url" | "video_urls";
 
@@ -320,7 +321,8 @@ export const VIDEO_MODELS: KieModel[] = [
     mode: "video",
     videoCategory: "prompting",
     model: "wan/3-0-video",
-    imageRefField: "image_url",
+    // kie docs: still → video uses first_frame_url (not image_url)
+    imageRefField: "first_frame_url",
     blurb: "Wan’s latest general video model (up to 30s).",
     aspectOptions: ["9:16", "16:9", "1:1", "4:3", "3:4"],
     defaultAspect: "9:16",
@@ -337,7 +339,7 @@ export const VIDEO_MODELS: KieModel[] = [
     mode: "video",
     videoCategory: "prompting",
     model: "wan/3-0-video-prime",
-    imageRefField: "image_url",
+    imageRefField: "first_frame_url",
     blurb: "Higher-speed Wan for quick cutdowns (up to 30s).",
     aspectOptions: ["9:16", "16:9", "1:1", "4:3", "3:4"],
     defaultAspect: "9:16",
@@ -562,12 +564,18 @@ export function buildKieInput(options: {
 
   // Most market models accept aspect_ratio; Veo uses slightly different shapes.
   // Motion-control APIs (Kling Motion / Wan Animate) omit aspect.
+  // Wan 3.0 with a still uses adaptive aspect (follows the first frame).
   if (def.id === "veo-3-1") {
     input.aspectRatio = aspect;
     input.model = "veo3_fast";
     if (hasImage) {
       input.imageUrls = uniqueUrls;
     }
+  } else if (
+    hasImage &&
+    (def.id === "wan-3-0" || def.id === "wan-3-prime")
+  ) {
+    input.aspect_ratio = "adaptive";
   } else if (
     !def.omitAspect &&
     !(hasImage && def.id === "pixverse-v6-max")
@@ -616,8 +624,12 @@ export function buildKieInput(options: {
   if (hasImage && primary && def.id !== "veo-3-1") {
     const field = def.imageRefField ?? "image_url";
     // Motion-control APIs accept exactly one still (input_urls max 1 / image_url).
+    // Wan 3.0 uses first_frame_url (single string) for still → video.
     const imagePayload =
-      def.requiresMotionVideo || field === "input_urls" || field === "image_url"
+      def.requiresMotionVideo ||
+      field === "input_urls" ||
+      field === "image_url" ||
+      field === "first_frame_url"
         ? [primary]
         : uniqueUrls;
     if (
