@@ -31,6 +31,7 @@ export async function POST(request: Request) {
       imageUrl?: string | null;
       imageUrls?: string[] | null;
       videoUrl?: string | null;
+      referenceVideoUrls?: string[] | null;
       audioUrl?: string | null;
     };
 
@@ -104,10 +105,29 @@ export async function POST(request: Request) {
       }
     }
 
+    let referenceVideoUrls = [
+      ...new Set(
+        (body.referenceVideoUrls ?? [])
+          .map((u) => (typeof u === "string" ? u.trim() : ""))
+          .filter(Boolean)
+      ),
+    ].slice(0, model.maxReferenceVideos ?? 5);
+
+    if (referenceVideoUrls.length && !model.supportsReferenceMedia) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `${model.label} does not support reference videos — use Wan 3.0 / Prime, or Motion Control.`,
+        },
+        { status: 400 }
+      );
+    }
+
     const apiKey = await loadKieApiKey(userId);
 
-    // Motion APIs are picky about fetching arbitrary hosts — rehost onto kie tempfile CDN.
-    if (model.requiresMotionVideo) {
+    // Motion / Wan reference APIs are picky about fetching arbitrary hosts —
+    // rehost onto kie tempfile CDN.
+    if (model.requiresMotionVideo || model.supportsReferenceMedia) {
       const rehostedImages: string[] = [];
       for (const [i, url] of imageUrls.entries()) {
         rehostedImages.push(
@@ -127,6 +147,20 @@ export async function POST(request: Request) {
           uploadPath: `ainstareel/${userId}/motion`,
           fileName: "motion.mp4",
         });
+      }
+      if (referenceVideoUrls.length) {
+        const rehostedVideos: string[] = [];
+        for (const [i, url] of referenceVideoUrls.entries()) {
+          rehostedVideos.push(
+            await rehostToKie({
+              apiKey,
+              fileUrl: url,
+              uploadPath: `ainstareel/${userId}/ref-videos`,
+              fileName: `ref-video-${i + 1}.mp4`,
+            })
+          );
+        }
+        referenceVideoUrls = rehostedVideos;
       }
     }
 
@@ -157,6 +191,7 @@ export async function POST(request: Request) {
       resolution,
       imageUrls,
       videoUrl,
+      referenceVideoUrls,
       audioUrl: body.audioUrl,
     });
 
