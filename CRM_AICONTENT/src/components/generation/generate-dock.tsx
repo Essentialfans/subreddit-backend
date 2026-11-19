@@ -332,47 +332,24 @@ export function GenerateDock({
     try {
       const hasSource = jobMode === "recreate" && Boolean(jobSourceUrl.trim());
       // Identity MUST be image_urls[0] (Seedream edit canvas + Nano refs).
-      // Cover first, then face/body refs — SOURCE always last for pose/scene only.
-      const identityUrls = [
+      // Cover + face/body refs, primary face duplicated once to overweight identity.
+      const uniqueIdentity = [
         ...(jobCreator?.coverUrl ? [jobCreator.coverUrl] : []),
         ...(jobCreator?.refs.map((r) => r.publicUrl) ?? []),
-      ].filter((url, i, arr) => Boolean(url) && arr.indexOf(url) === i);
-      const activeGenId =
-        jobMode === "presets" ? jobPresetQuality : jobGenModelId;
-      const recreateImageOrder = "identity-first" as const;
-      const enhanceRes = await fetch("/api/generation/enhance", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          mode: jobMode,
-          userText: jobPrompt,
-          modelName: jobCreator?.name,
-          modelId: activeGenId,
-          presetHint: jobMode === "presets" ? preset?.promptHint : undefined,
-          enhanceWithAi: jobEnhance || jobMode !== "free",
-          hasImage: Boolean(
-            hasSource || identityUrls.length > 0 || jobExtraRefs.length > 0
-          ),
-          hasSourceImage: hasSource,
-          clothing: jobMode === "recreate" ? jobClothing : null,
-          aspect: jobRatio,
-          refLabels,
-          keepPose: jobKeepPose,
-          recreateImageOrder,
-        }),
-      });
-      const enhanceJson = (await enhanceRes.json()) as {
-        ok: boolean;
-        prompt?: string;
-        error?: string;
-      };
-      if (!enhanceRes.ok || !enhanceJson.ok || !enhanceJson.prompt) {
-        throw new Error(enhanceJson.error || "Prompt expand failed");
-      }
-      setExpandedPrompt(enhanceJson.prompt);
-
+      ]
+        .filter((url, i, arr) => Boolean(url) && arr.indexOf(url) === i)
+        .slice(0, 3);
+      const primaryIdentity = uniqueIdentity[0];
+      const identityUrls = primaryIdentity
+        ? [primaryIdentity, primaryIdentity, ...uniqueIdentity.slice(1)].slice(
+            0,
+            4
+          )
+        : [];
       const clothingUrls =
-        jobClothing === "external" && jobExternalClothingUrl.trim()
+        jobMode === "recreate" &&
+        jobClothing === "external" &&
+        jobExternalClothingUrl.trim()
           ? [jobExternalClothingUrl.trim()]
           : [];
       // Recreate: My Model identity first (wins face/body), SOURCE last (pose/scene).
@@ -385,6 +362,46 @@ export function GenerateDock({
               jobSourceUrl.trim(),
             ].filter(Boolean)
           : [...identityUrls, ...jobExtraRefs];
+      const identityRefCount = identityUrls.length;
+      const sourceImageIndex =
+        jobMode === "recreate" && hasSource ? imageUrls.length : undefined;
+      const activeGenId =
+        jobMode === "presets" ? jobPresetQuality : jobGenModelId;
+      const recreateImageOrder = "identity-first" as const;
+      const enhanceRes = await fetch("/api/generation/enhance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: jobMode,
+          userText: jobPrompt,
+          modelName: jobCreator?.name,
+          modelId: activeGenId,
+          presetHint: jobMode === "presets" ? preset?.promptHint : undefined,
+          // Recreate uses locked deterministic prompt server-side (ignore toggle).
+          enhanceWithAi:
+            jobMode === "recreate" ? false : jobEnhance || jobMode !== "free",
+          hasImage: Boolean(
+            hasSource || identityUrls.length > 0 || jobExtraRefs.length > 0
+          ),
+          hasSourceImage: hasSource,
+          clothing: jobMode === "recreate" ? jobClothing : null,
+          aspect: jobRatio,
+          refLabels,
+          keepPose: jobKeepPose,
+          recreateImageOrder,
+          identityRefCount,
+          sourceImageIndex,
+        }),
+      });
+      const enhanceJson = (await enhanceRes.json()) as {
+        ok: boolean;
+        prompt?: string;
+        error?: string;
+      };
+      if (!enhanceRes.ok || !enhanceJson.ok || !enhanceJson.prompt) {
+        throw new Error(enhanceJson.error || "Prompt expand failed");
+      }
+      setExpandedPrompt(enhanceJson.prompt);
 
       const selectedModelId =
         jobMode === "presets" ? jobPresetQuality : jobGenModelId;

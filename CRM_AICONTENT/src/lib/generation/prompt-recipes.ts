@@ -41,16 +41,20 @@ export interface RecipeContext {
    * Nano refs). SOURCE is last (pose/scene only). source-first kept for legacy only.
    */
   recreateImageOrder?: RecreateImageOrder;
+  /** How many leading image_urls are My Model identity refs */
+  identityRefCount?: number;
+  /** 1-based index of the SOURCE image in image_urls (usually last) */
+  sourceImageIndex?: number;
 }
 
 export function clothingInstruction(ctx: RecipeContext): string {
   switch (ctx.clothing) {
     case "source":
-      return "Put the SOURCE outfit/clothing onto the My Model body (same dress/clothes as SOURCE, different body).";
+      return "CLOTHING ONLY from the LAST/SOURCE image (fabric, cut, color of garments). Do NOT take hair, face, makeup, skin tone, age, or body shape from SOURCE — those stay Image 1.";
     case "external":
-      return "Dress the My Model body in the EXTERNAL clothing reference; ignore source and model outfits.";
+      return "Dress Image 1's body in the EXTERNAL clothing reference; ignore SOURCE and model outfits for clothes only.";
     case "model":
-      return "Dress using clothing/style from the My Model identity references (not the source outfit).";
+      return "Wardrobe from the My Model identity images (Image 1+), not the SOURCE outfit.";
     default:
       return "";
   }
@@ -61,30 +65,57 @@ export function recreateNoTextRule(): string {
   return "NO text in the output: remove every caption, overlay, watermark, logo, speech bubble, sticker, subtitle, and typography from the SOURCE — clean photo only, zero readable letters.";
 }
 
+/** Hard face keep-list — Seedream/Nano respond better to explicit preserve lists. */
+export function recreateFaceKeepList(name: string): string {
+  return `KEEP from Image 1 (${name}) exactly: face geometry, eye shape/color, nose, lips, jawline, cheekbones, eyebrows, skin tone, freckles/moles, hair color, hair length, hair texture, age, and body proportions. Do not blend with the LAST image's face.`;
+}
+
+/**
+ * Build a recreate prompt with numbered Image roles (Image1 / Image2 / …).
+ * identityCount = how many leading images are My Model refs (before SOURCE last).
+ */
 export function recreateFallback(userText: string, ctx: RecipeContext): string {
   const name = ctx.modelName?.trim() || "the subject";
+  const identityCount = Math.max(1, ctx.identityRefCount ?? 1);
+  const sourceIndex = ctx.sourceImageIndex ?? identityCount + 1;
+  const identityRange =
+    identityCount === 1
+      ? "Image1"
+      : `Image1–Image${identityCount}`;
+  const sourceLabel = `Image${sourceIndex}`;
   const pose =
     ctx.keepPose !== false
-      ? `Pose lock: copy the LAST image's pose, camera angle, framing, and hand/leg placement onto ${name} — rebuild the body from identity Images 1+, never from the LAST/SOURCE woman.`
-      : "Keep the SOURCE scene and setting; pose may adjust slightly.";
+      ? `CHANGE: put ${name} from Image1 into the exact pose, camera angle, framing, and hand/leg placement of ${sourceLabel}.`
+      : `CHANGE: place ${name} from Image1 into the scene/setting of ${sourceLabel}; pose may adjust slightly.`;
   const clothes = clothingInstruction(ctx);
   const extra = userText.replace(/@[a-zA-Z0-9_-]+/g, "").trim();
   const sourceFirst = ctx.recreateImageOrder === "source-first";
-  const orderLine = sourceFirst
-    ? `Image roles: Image 1 is the SOURCE scene to edit. Images 2+ are ${name}'s My Model identity refs (face AND full body). REPLACE the woman in Image 1 with ${name} from Images 2+ — do not leave Image 1's woman unchanged.`
-    : `Image roles (priority): Images 1+ are ${name}'s My Model identity (face AND full body) — Image 1 is the person to KEEP. The LAST image is SOURCE for pose, camera, scene, background, and composition ONLY. Ignore the LAST image's face and body completely.`;
+
+  if (sourceFirst) {
+    return joinParts(
+      `Edit Image1 (SOURCE scene). REPLACE the woman with ${name} from Image2+.`,
+      recreateFaceKeepList(name),
+      pose,
+      clothes,
+      recreateNoTextRule(),
+      extra ? `Extra direction: ${extra}.` : "",
+      "Photoreal, sharp face matching Image2+, natural skin."
+    );
+  }
+
   return joinParts(
-    `Generate a NEW photoreal photograph of ${name} (not a copy or light edit of the SOURCE / reference woman).`,
-    orderLine,
-    `IDENTITY PRIORITY: the only acceptable female subject is ${name} from the My Model identity images. Face, age, hair, skin tone, body shape, proportions, and physique MUST match those identity refs.`,
-    `FAILURE CONDITIONS: keeping the SOURCE woman's face, mixing faces, aging/youth-ifying ${name}, or outputting a near-copy of the SOURCE person.`,
-    `If SOURCE has multiple people: the primary/left woman becomes ${name}; other people follow Extra direction only.`,
+    `Generate a NEW photoreal photo of ${name}.`,
+    `Image roles: ${identityRange} = ${name} My Model identity (ONLY face/hair/body reference). ${sourceLabel} = SOURCE pose/scene/background ONLY.`,
+    `${identityRange} @Image1 is the sole identity for ${name}. ${sourceLabel} must NOT contribute face, hair color, hair length, ethnicity, age, or body shape.`,
     pose,
+    recreateFaceKeepList(name),
+    `If ${sourceLabel} has multiple people: the primary/left woman becomes ${name} from Image1; other people follow Extra direction only.`,
     clothes,
     recreateNoTextRule(),
     extra
-      ? `Extra direction: ${extra}.`
-      : "Keep the SOURCE background, setting, and lighting — swap only the female subject for the My Model body.",
+      ? `Extra direction (do not override identity): ${extra}.`
+      : `Keep ${sourceLabel}'s background, setting, and lighting.`,
+    `FAILURE if the result looks like the woman in ${sourceLabel} or a face-mix. Success only if a stranger would recognize Image1's ${name}.`,
     "Photoreal, sharp face, natural skin, coherent lighting."
   );
 }
@@ -543,21 +574,21 @@ Subject → composition → light → style. Return ONLY the prompt.`,
     id: "seedream-5-pro",
     label: "Seedream 5.0 Pro",
     systemPrompt: `You rewrite prompts for Seedream 5 Pro image-to-image.
-Seedream edits image_urls[0] as the canvas. In recreate jobs Image 1+ MUST be the named My Model identity (keep that face and body). The LAST image is SOURCE pose/scene/background only — transfer that composition onto Image 1's person; never adopt the LAST image's face or body. State numbered roles: Image 1 = identity canvas, LAST = pose reference. Strip all SOURCE text/overlays. Under 120 words. Return ONLY the prompt.`,
+Use change-then-keep-list structure. Name Image1 / Image2 roles. For identity: keep face, hair color/length, eyes, nose, lips, jaw, skin, age from Image1. Strip SOURCE text. Under 120 words. Return ONLY the prompt.`,
   },
   "seedream-5-flash": {
     ...IMAGE_DEFAULT,
     id: "seedream-5-flash",
     label: "Seedream 5.0 Flash",
     systemPrompt: `You rewrite prompts for Seedream Flash image-to-image.
-In recreate: Image 1+ = My Model identity canvas (KEEP face/body). LAST = SOURCE pose/scene only. Put the My Model into the SOURCE pose — never keep the SOURCE woman's face. Strip captions. Return ONLY the prompt.`,
+Numbered Image roles + keep-list for face/hair from Image1. Strip captions. Return ONLY the prompt.`,
   },
   "seedream-4-5": {
     ...IMAGE_DEFAULT,
     id: "seedream-4-5",
     label: "Seedream 4.5",
     systemPrompt: `You rewrite prompts for Seedream 4.5 image-to-image.
-In recreate: Image 1+ = My Model identity canvas (KEEP face/body). LAST = SOURCE pose/scene only. Put the My Model into the SOURCE pose — never keep the SOURCE woman's face. Strip captions. Return ONLY the prompt.`,
+Numbered Image roles + keep-list for face/hair from Image1. Strip captions. Return ONLY the prompt.`,
   },
   "flux-3-klein": {
     ...IMAGE_DEFAULT,

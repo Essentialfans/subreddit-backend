@@ -29,6 +29,8 @@ export async function POST(request: Request) {
       durationSec?: number | null;
       aspect?: string | null;
       recreateImageOrder?: "identity-first" | "source-first";
+      identityRefCount?: number;
+      sourceImageIndex?: number;
     };
 
     let kieApiKey: string | null = null;
@@ -56,6 +58,8 @@ export async function POST(request: Request) {
       aspect: body.aspect ?? catalog?.defaultAspect ?? null,
       // Identity always first — Seedream edits image_urls[0], so My Model must be [0].
       recreateImageOrder: body.recreateImageOrder ?? "identity-first",
+      identityRefCount: body.identityRefCount,
+      sourceImageIndex: body.sourceImageIndex,
       kieApiKey,
     });
 

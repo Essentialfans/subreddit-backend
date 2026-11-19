@@ -1,6 +1,7 @@
 import {
   clothingInstruction,
   getPromptRecipe,
+  recreateFaceKeepList,
   recreateFallback,
   recreateNoTextRule,
   type ClothingMode,
@@ -25,6 +26,10 @@ export interface PromptBuildInput {
   aspect?: string | null;
   /** Recreate always uses identity-first (My Model = image_urls[0]). */
   recreateImageOrder?: "identity-first" | "source-first";
+  /** How many leading image_urls are My Model identity refs */
+  identityRefCount?: number;
+  /** 1-based index of the SOURCE image in image_urls */
+  sourceImageIndex?: number;
   /** User's kie.ai key — required for live LLM enhance */
   kieApiKey?: string | null;
 }
@@ -50,6 +55,8 @@ function recipeContext(input: PromptBuildInput): RecipeContext {
     mode: input.mode,
     clothing: input.clothing,
     recreateImageOrder: input.recreateImageOrder,
+    identityRefCount: input.identityRefCount,
+    sourceImageIndex: input.sourceImageIndex,
   };
 }
 
@@ -128,11 +135,13 @@ function sealIdentity(prompt: string, ctx: RecipeContext): string {
 
   const parts: string[] = [];
   if (isRecreate && name) {
+    const sourceIndex = ctx.sourceImageIndex ?? (ctx.identityRefCount ?? 1) + 1;
     parts.push(
       ctx.recreateImageOrder === "source-first"
         ? `Identity priority: Images 2+ are ${name}. Replace the Image-1 SOURCE woman with ${name}'s full body and face — do NOT keep the SOURCE woman's face or body.`
-        : `Identity priority: Images 1+ are ${name} (KEEP face+body as the subject). LAST image is SOURCE pose/scene only — put ${name} into that pose; do NOT keep the SOURCE woman's face, body, age, or figure.`
+        : `Identity priority: Image1 is ${name} (KEEP face+hair+body). Image${sourceIndex} is SOURCE pose/scene only — put ${name} into that pose; do NOT keep Image${sourceIndex}'s face, hair, body, age, or figure.`
     );
+    parts.push(recreateFaceKeepList(name));
   } else if (name) {
     parts.push(
       ctx.hasImage
@@ -148,11 +157,18 @@ function sealIdentity(prompt: string, ctx: RecipeContext): string {
   const withoutDup = trimmed
     .replace(/Identity-first recreate:[^.]*\./gi, " ")
     .replace(/Identity priority:[^.]*\./gi, " ")
+    .replace(/KEEP from Image 1[^.]*\./gi, " ")
     .replace(/NO text in the output:[^.]*\./gi, " ")
     .replace(/\s+/g, " ")
     .trim();
 
-  return `${parts.join(" ")} ${withoutDup}`.replace(/\s+/g, " ").trim();
+  // Face lock at BOTH ends — models often attend to the final sentence.
+  const head = parts.join(" ");
+  const tail =
+    isRecreate && name
+      ? `Final check: output face must match Image1 (${name}), not the SOURCE woman.`
+      : "";
+  return `${head} ${withoutDup} ${tail}`.replace(/\s+/g, " ").trim();
 }
 
 /**
@@ -168,10 +184,20 @@ export async function enhancePrompt(
   const text = input.userText.trim();
   const isRecreate = input.mode === "recreate" || Boolean(input.hasSourceImage);
 
+  // Recreate: always use the deterministic identity-lock prompt.
+  // LLM rewrite was softening face rules and letting SOURCE features win.
+  if (isRecreate) {
+    return {
+      prompt: sealIdentity(recreateFallback(text, ctx), ctx),
+      provider: "passthrough",
+      recipeId: recipe.id,
+      formulaName: recipe.formulaName,
+      note: "Recreate uses locked identity recipe (no LLM rewrite).",
+    };
+  }
+
   if (!input.enhanceWithAi) {
-    const base = isRecreate
-      ? recreateFallback(text, ctx)
-      : text || recipe.fallbackExpand("", ctx);
+    const base = text || recipe.fallbackExpand("", ctx);
     return {
       prompt: sealIdentity(base, ctx),
       provider: "passthrough",
@@ -184,11 +210,7 @@ export async function enhancePrompt(
     try {
       const raw = await kieChatComplete({
         apiKey: input.kieApiKey,
-        system: isRecreate
-          ? `${recipe.systemPrompt}
-
-RECREATE OVERRIDE (identity priority): Images 1+ are the My Model identity canvas — that person's FULL face + body + age + proportions MUST appear in the output. The LAST image is SOURCE for pose, camera, scene, and background ONLY — never keep the SOURCE woman's face or body. If SOURCE has multiple people, the primary/left woman becomes the named My Model; follow Extra direction for anyone else. Strip ALL text, captions, overlays, watermarks, and speech bubbles. Generate a NEW photo of the My Model in the SOURCE pose — not a light edit that leaves the SOURCE woman.`
-          : recipe.systemPrompt,
+        system: recipe.systemPrompt,
         user: buildUserMessage(input, recipe.formulaName),
       });
       return {
@@ -201,9 +223,7 @@ RECREATE OVERRIDE (identity priority): Images 1+ are the My Model identity canva
     } catch (err) {
       const message = err instanceof Error ? err.message : "Enhancer failed";
       return {
-        prompt: isRecreate
-          ? recreateFallback(text, ctx)
-          : recipe.fallbackExpand(text, ctx),
+        prompt: recipe.fallbackExpand(text, ctx),
         provider: "recipe-fallback",
         recipeId: recipe.id,
         formulaName: recipe.formulaName,
@@ -213,9 +233,7 @@ RECREATE OVERRIDE (identity priority): Images 1+ are the My Model identity canva
   }
 
   return {
-    prompt: isRecreate
-      ? recreateFallback(text, ctx)
-      : recipe.fallbackExpand(text, ctx),
+    prompt: recipe.fallbackExpand(text, ctx),
     provider: "recipe-fallback",
     recipeId: recipe.id,
     formulaName: recipe.formulaName,
