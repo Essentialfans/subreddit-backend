@@ -550,6 +550,8 @@ export function buildKieInput(options: {
   duration?: number;
   imageUrl?: string | null;
   imageUrls?: string[] | null;
+  /** Optional Wan 3.0 last frame (only with first_frame_url, never with reference_*) */
+  lastFrameUrl?: string | null;
   videoUrl?: string | null;
   /** Wan 3.0 reference clips → reference_video_urls (@Video1…) */
   referenceVideoUrls?: string[] | null;
@@ -564,6 +566,7 @@ export function buildKieInput(options: {
   const uniqueUrls = [...new Set(urls)];
   const hasImage = uniqueUrls.length > 0;
   const primary = uniqueUrls[0];
+  const lastFrameUrl = options.lastFrameUrl?.trim() || "";
   const motionVideo = options.videoUrl?.trim() || "";
   const referenceVideos = [
     ...new Set(
@@ -576,6 +579,7 @@ export function buildKieInput(options: {
     hasImage && def.imageRefModel ? def.imageRefModel : def.model;
 
   // Wan 3.0: reference_* cannot be combined with first_frame_url / last_frame_url.
+  // Prefer reference mode when clips (or multi-image refs) are provided.
   const useWanReferences =
     Boolean(def.supportsReferenceMedia) &&
     (referenceVideos.length > 0 || uniqueUrls.length > 1);
@@ -660,7 +664,7 @@ export function buildKieInput(options: {
   } else if (hasImage && primary && def.id !== "veo-3-1") {
     const field = def.imageRefField ?? "image_url";
     // Motion-control APIs accept exactly one still (input_urls max 1 / image_url).
-    // Wan 3.0 single still → first_frame_url.
+    // Wan 3.0 single still → first_frame_url (+ optional last_frame_url).
     const imagePayload =
       def.requiresMotionVideo ||
       field === "input_urls" ||
@@ -677,6 +681,13 @@ export function buildKieInput(options: {
       input[field] = def.requiresMotionVideo ? [primary] : imagePayload;
     } else {
       input[field] = primary;
+    }
+    if (
+      field === "first_frame_url" &&
+      lastFrameUrl &&
+      def.supportsReferenceMedia
+    ) {
+      input.last_frame_url = lastFrameUrl;
     }
   }
 

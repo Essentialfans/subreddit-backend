@@ -30,6 +30,7 @@ export async function POST(request: Request) {
       resolution?: string | null;
       imageUrl?: string | null;
       imageUrls?: string[] | null;
+      lastFrameUrl?: string | null;
       videoUrl?: string | null;
       referenceVideoUrls?: string[] | null;
       audioUrl?: string | null;
@@ -113,6 +114,8 @@ export async function POST(request: Request) {
       ),
     ].slice(0, model.maxReferenceVideos ?? 5);
 
+    let lastFrameUrl = body.lastFrameUrl?.trim() || null;
+
     if (referenceVideoUrls.length && !model.supportsReferenceMedia) {
       return NextResponse.json(
         {
@@ -121,6 +124,31 @@ export async function POST(request: Request) {
         },
         { status: 400 }
       );
+    }
+
+    if (lastFrameUrl && !model.supportsReferenceMedia) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `${model.label} does not support an end frame — use Wan 3.0 / Prime.`,
+        },
+        { status: 400 }
+      );
+    }
+
+    if (lastFrameUrl && !imageUrls[0]) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "End frame needs a start frame first.",
+        },
+        { status: 400 }
+      );
+    }
+
+    // kie: reference_* cannot mix with first/last frame
+    if (referenceVideoUrls.length && lastFrameUrl) {
+      lastFrameUrl = null;
     }
 
     const apiKey = await loadKieApiKey(userId);
@@ -140,6 +168,14 @@ export async function POST(request: Request) {
         );
       }
       imageUrls = rehostedImages;
+      if (lastFrameUrl) {
+        lastFrameUrl = await rehostToKie({
+          apiKey,
+          fileUrl: lastFrameUrl,
+          uploadPath: `ainstareel/${userId}/stills`,
+          fileName: "end-frame.jpg",
+        });
+      }
       if (videoUrl) {
         videoUrl = await rehostToKie({
           apiKey,
@@ -190,6 +226,7 @@ export async function POST(request: Request) {
       duration,
       resolution,
       imageUrls,
+      lastFrameUrl,
       videoUrl,
       referenceVideoUrls,
       audioUrl: body.audioUrl,
