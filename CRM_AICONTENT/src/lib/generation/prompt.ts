@@ -2,6 +2,7 @@ import {
   clothingInstruction,
   getPromptRecipe,
   recreateFallback,
+  recreateNoTextRule,
   type ClothingMode,
   type RecipeContext,
 } from "@/lib/generation/prompt-recipes";
@@ -70,15 +71,19 @@ function buildUserMessage(input: PromptBuildInput, formulaName: string): string 
       "RECREATE MODE (identity-first): The FIRST images are My Model identity refs — use that person's FULL body and face (age, hair, physique, proportions). The LAST image is the SOURCE for pose, camera, scene, and background ONLY."
     );
     bits.push(
-      "CRITICAL: Do NOT keep the SOURCE person's body. Replace the entire person with the My Model. Copying the source body/age/figure is a failure."
+      "CRITICAL: Generate a NEW photo. Do NOT keep the SOURCE woman's face or body. Replace the primary female / left woman with the My Model. Copying the source woman is a failure."
     );
+    bits.push(
+      "If SOURCE has multiple people, only the female subject becomes the My Model unless Extra direction says otherwise; other people follow Extra direction."
+    );
+    bits.push(recreateNoTextRule());
     if (input.keepPose !== false) {
       bits.push(
-        "Keep pose ON: match SOURCE pose and framing, but rebuild the body as the My Model."
+        "Keep pose ON: match SOURCE pose and framing, but rebuild the female body as the My Model."
       );
     } else {
       bits.push(
-        "Keep pose OFF: scene/setting from SOURCE; pose may adjust; body must still be the My Model."
+        "Keep pose OFF: scene/setting from SOURCE; pose may adjust; female body must still be the My Model."
       );
     }
     const clothes = clothingInstruction(recipeContext(input));
@@ -104,33 +109,38 @@ function buildUserMessage(input: PromptBuildInput, formulaName: string): string 
   return bits.join("\n");
 }
 
-/** Always re-assert identity after LLM rewrite so scene stereotypes can't override refs. */
+/** Always re-assert identity + no-text after LLM rewrite so source faces/captions can't win. */
 function sealIdentity(prompt: string, ctx: RecipeContext): string {
   const name = ctx.modelName?.trim();
-  if (!name) return prompt.trim();
-  const recreateLock =
-    ctx.mode === "recreate" || ctx.hasSourceImage
-      ? `Identity-first recreate: the person must be ${name}'s full body and face from the My Model identity refs — do NOT copy the SOURCE person's body, age, or figure. SOURCE supplies pose/scene only.`
-      : ctx.hasImage
-        ? `Keep ${name}'s exact face, age, hair, body, and identity from the reference images as the sole subject — do not invent a different person.`
-        : `Featuring ${name} as the sole subject.`;
   const trimmed = prompt.trim();
-  if (
-    (ctx.mode === "recreate" || ctx.hasSourceImage) &&
-    /full body|do not copy the source person's body/i.test(trimmed) &&
-    trimmed.toLowerCase().includes(name.toLowerCase())
-  ) {
-    return trimmed;
+  const isRecreate = ctx.mode === "recreate" || Boolean(ctx.hasSourceImage);
+
+  if (!name && !isRecreate) return trimmed;
+
+  const parts: string[] = [];
+  if (isRecreate && name) {
+    parts.push(
+      `Identity-first recreate: the primary woman must be ${name}'s full body and face from the My Model identity refs — do NOT keep the SOURCE woman's face, body, age, or figure. SOURCE supplies pose/scene only.`
+    );
+  } else if (name) {
+    parts.push(
+      ctx.hasImage
+        ? `Keep ${name}'s exact face, age, hair, body, and identity from the reference images as the sole subject — do not invent a different person.`
+        : `Featuring ${name} as the sole subject.`
+    );
   }
-  if (
-    ctx.mode !== "recreate" &&
-    !ctx.hasSourceImage &&
-    trimmed.toLowerCase().includes("exact face") &&
-    trimmed.toLowerCase().includes(name.toLowerCase())
-  ) {
-    return trimmed;
+  if (isRecreate) {
+    parts.push(recreateNoTextRule());
   }
-  return `${recreateLock} ${trimmed}`.replace(/\s+/g, " ").trim();
+
+  // Drop a weak prior lock if we're about to re-seal harder rules.
+  const withoutDup = trimmed
+    .replace(/Identity-first recreate:[^.]*\./gi, " ")
+    .replace(/NO text in the output:[^.]*\./gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return `${parts.join(" ")} ${withoutDup}`.replace(/\s+/g, " ").trim();
 }
 
 /**
@@ -165,7 +175,7 @@ export async function enhancePrompt(
         system: isRecreate
           ? `${recipe.systemPrompt}
 
-RECREATE OVERRIDE (identity-first): Identity reference images define the FULL person (face + body shape + age + proportions). The SOURCE image is only for pose, camera, scene, and background. Never keep the source person's body. Never invent an unrelated setting.`
+RECREATE OVERRIDE (identity-first): Identity reference images define the FULL person (face + body shape + age + proportions). The SOURCE image is only for pose, camera, scene, and background. Never keep the SOURCE woman's face or body. If multiple people are in SOURCE, replace the primary/left woman with the named My Model; follow Extra direction for anyone else. Always strip ALL text, captions, overlays, watermarks, and speech bubbles from the SOURCE — output must have zero typography. Generate a NEW photo, not a light edit of SOURCE.`
           : recipe.systemPrompt,
         user: buildUserMessage(input, recipe.formulaName),
       });

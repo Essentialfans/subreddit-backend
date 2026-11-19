@@ -49,23 +49,32 @@ export function clothingInstruction(ctx: RecipeContext): string {
   }
 }
 
+/** Always strip typography that leaks from meme / caption source stills. */
+export function recreateNoTextRule(): string {
+  return "NO text in the output: remove every caption, overlay, watermark, logo, speech bubble, sticker, subtitle, and typography from the SOURCE — clean photo only, zero readable letters.";
+}
+
 export function recreateFallback(userText: string, ctx: RecipeContext): string {
   const name = ctx.modelName?.trim() || "the subject";
   const pose =
     ctx.keepPose !== false
-      ? "Match the SOURCE pose, camera angle, framing, and hand/leg placement — but NOT the source person's body."
+      ? `Match the SOURCE pose, camera angle, framing, and hand/leg placement for ${name} — but rebuild ${name}'s body from identity refs, never from SOURCE.`
       : "Keep the SOURCE scene and setting; pose may adjust slightly.";
   const clothes = clothingInstruction(ctx);
   const extra = userText.replace(/@[a-zA-Z0-9_-]+/g, "").trim();
   return joinParts(
-    `Identity-first recreate: the person must be ${name} from the My Model identity references (face AND full body).`,
-    `Use ${name}'s exact face, age, hair, skin tone, body shape, proportions, and physique from the identity images.`,
-    `CRITICAL: Do NOT copy the SOURCE person's body, age, weight, or figure — only borrow pose/scene from SOURCE.`,
+    `Generate a NEW photoreal photograph (not a light edit of SOURCE).`,
+    `Image order: earlier images are ${name}'s My Model identity refs (face+body); the LAST image is SOURCE for pose/scene/background only.`,
+    `Identity-first recreate: the primary woman / female subject MUST be ${name} from the My Model identity references (face AND full body).`,
+    `Use ${name}'s exact face, age, hair, skin tone, body shape, proportions, and physique from the identity images — those refs win over SOURCE.`,
+    `CRITICAL: Do NOT keep the SOURCE woman's face, body, age, weight, ethnicity, or figure. Leaving the SOURCE woman unchanged is a failure.`,
+    `If SOURCE has multiple people: replace the woman (left / primary female unless Extra direction says otherwise) with ${name}; other people follow Extra direction only.`,
     pose,
     clothes,
+    recreateNoTextRule(),
     extra
       ? `Extra direction: ${extra}.`
-      : "Keep the SOURCE background, sofa/setting, and lighting — swap only the person for the My Model body.",
+      : "Keep the SOURCE background, setting, and lighting — swap only the female subject for the My Model body.",
     "Photoreal, sharp face, natural skin, coherent lighting."
   );
 }
@@ -492,8 +501,9 @@ const IMAGE_RECIPES: Record<string, PromptRecipe> = {
     id: "nano-banana-pro",
     label: "Nano Banana Pro",
     systemPrompt: `You rewrite prompts for Google Nano Banana Pro stills with reference identity images attached.
-CRITICAL: Keep the named talent's exact face/age/hair from the references. Do not invent an older or younger person from scene stereotypes (e.g. "farm" must NOT become elderly).
-Structure: identity lock → scene/wardrobe → light → style. Under 80 words. Return ONLY the prompt.`,
+CRITICAL: Keep the named talent's exact face/age/hair/body from the identity references. Do not invent an older or younger person from scene stereotypes.
+In recreate jobs: the last image is SOURCE pose/scene only — never keep the SOURCE woman's face; strip ALL captions/overlays/text from SOURCE.
+Structure: identity lock → scene/wardrobe → no-text → light → style. Under 110 words. Return ONLY the prompt.`,
   },
   "nano-banana-2-1": {
     ...IMAGE_DEFAULT,
