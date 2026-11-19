@@ -37,8 +37,8 @@ export interface RecipeContext {
   mode?: "presets" | "recreate" | "free";
   clothing?: ClothingMode | null;
   /**
-   * Seedream i2i edits image_urls[0] strongly — use source-first + numbered roles.
-   * Nano Banana prefers identity refs first.
+   * Always identity-first for recreate: image_urls[0] = My Model (Seedream canvas +
+   * Nano refs). SOURCE is last (pose/scene only). source-first kept for legacy only.
    */
   recreateImageOrder?: RecreateImageOrder;
 }
@@ -65,21 +65,20 @@ export function recreateFallback(userText: string, ctx: RecipeContext): string {
   const name = ctx.modelName?.trim() || "the subject";
   const pose =
     ctx.keepPose !== false
-      ? `Match the SOURCE pose, camera angle, framing, and hand/leg placement for ${name} — but rebuild ${name}'s body from identity refs, never from SOURCE.`
+      ? `Pose lock: copy the LAST image's pose, camera angle, framing, and hand/leg placement onto ${name} — rebuild the body from identity Images 1+, never from the LAST/SOURCE woman.`
       : "Keep the SOURCE scene and setting; pose may adjust slightly.";
   const clothes = clothingInstruction(ctx);
   const extra = userText.replace(/@[a-zA-Z0-9_-]+/g, "").trim();
   const sourceFirst = ctx.recreateImageOrder === "source-first";
   const orderLine = sourceFirst
     ? `Image roles: Image 1 is the SOURCE scene to edit. Images 2+ are ${name}'s My Model identity refs (face AND full body). REPLACE the woman in Image 1 with ${name} from Images 2+ — do not leave Image 1's woman unchanged.`
-    : `Image order: earlier images are ${name}'s My Model identity refs (face+body); the LAST image is SOURCE for pose/scene/background only.`;
+    : `Image roles (priority): Images 1+ are ${name}'s My Model identity (face AND full body) — Image 1 is the person to KEEP. The LAST image is SOURCE for pose, camera, scene, background, and composition ONLY. Ignore the LAST image's face and body completely.`;
   return joinParts(
-    `Generate a NEW photoreal photograph of ${name} (not a copy or light edit of the SOURCE woman).`,
+    `Generate a NEW photoreal photograph of ${name} (not a copy or light edit of the SOURCE / reference woman).`,
     orderLine,
-    `Identity-first recreate: the primary woman / female subject MUST be ${name} from the My Model identity references (face AND full body).`,
-    `Use ${name}'s exact face, age, hair, skin tone, body shape, proportions, and physique from the identity images — those refs win over SOURCE.`,
-    `CRITICAL: Do NOT keep the SOURCE woman's face, body, age, weight, ethnicity, or figure. Leaving the SOURCE woman unchanged is a failure.`,
-    `If SOURCE has multiple people: replace the woman (left / primary female unless Extra direction says otherwise) with ${name}; other people follow Extra direction only.`,
+    `IDENTITY PRIORITY: the only acceptable female subject is ${name} from the My Model identity images. Face, age, hair, skin tone, body shape, proportions, and physique MUST match those identity refs.`,
+    `FAILURE CONDITIONS: keeping the SOURCE woman's face, mixing faces, aging/youth-ifying ${name}, or outputting a near-copy of the SOURCE person.`,
+    `If SOURCE has multiple people: the primary/left woman becomes ${name}; other people follow Extra direction only.`,
     pose,
     clothes,
     recreateNoTextRule(),
@@ -513,8 +512,8 @@ const IMAGE_RECIPES: Record<string, PromptRecipe> = {
     label: "Nano Banana Pro",
     systemPrompt: `You rewrite prompts for Google Nano Banana Pro stills with reference identity images attached.
 CRITICAL: Keep the named talent's exact face/age/hair/body from the identity references. Do not invent an older or younger person from scene stereotypes.
-In recreate jobs: the last image is SOURCE pose/scene only — never keep the SOURCE woman's face; strip ALL captions/overlays/text from SOURCE.
-Structure: identity lock → scene/wardrobe → no-text → light → style. Under 110 words. Return ONLY the prompt.`,
+In recreate jobs: Images 1+ = My Model identity (KEEP this person). LAST image = SOURCE pose/scene only — never keep the SOURCE woman's face/body; strip ALL captions/overlays/text from SOURCE.
+Structure: identity lock → pose from SOURCE → wardrobe → no-text → light → style. Under 110 words. Return ONLY the prompt.`,
   },
   "nano-banana-2-1": {
     ...IMAGE_DEFAULT,
@@ -544,21 +543,21 @@ Subject → composition → light → style. Return ONLY the prompt.`,
     id: "seedream-5-pro",
     label: "Seedream 5.0 Pro",
     systemPrompt: `You rewrite prompts for Seedream 5 Pro image-to-image.
-Seedream strongly edits image_urls[0]. In recreate jobs: Image 1 is SOURCE pose/scene; Images 2+ are the named My Model identity. The output woman MUST be the My Model — never a copy of the SOURCE woman. State numbered image roles explicitly. Strip all SOURCE text/overlays. Under 120 words. Return ONLY the prompt.`,
+Seedream edits image_urls[0] as the canvas. In recreate jobs Image 1+ MUST be the named My Model identity (keep that face and body). The LAST image is SOURCE pose/scene/background only — transfer that composition onto Image 1's person; never adopt the LAST image's face or body. State numbered roles: Image 1 = identity canvas, LAST = pose reference. Strip all SOURCE text/overlays. Under 120 words. Return ONLY the prompt.`,
   },
   "seedream-5-flash": {
     ...IMAGE_DEFAULT,
     id: "seedream-5-flash",
     label: "Seedream 5.0 Flash",
     systemPrompt: `You rewrite prompts for Seedream Flash image-to-image.
-In recreate: Image 1 = SOURCE to edit; Images 2+ = My Model identity. Replace the SOURCE woman with the My Model. Strip captions. Return ONLY the prompt.`,
+In recreate: Image 1+ = My Model identity canvas (KEEP face/body). LAST = SOURCE pose/scene only. Put the My Model into the SOURCE pose — never keep the SOURCE woman's face. Strip captions. Return ONLY the prompt.`,
   },
   "seedream-4-5": {
     ...IMAGE_DEFAULT,
     id: "seedream-4-5",
     label: "Seedream 4.5",
     systemPrompt: `You rewrite prompts for Seedream 4.5 image-to-image.
-In recreate: Image 1 = SOURCE; Images 2+ = My Model identity. Swap the woman to the My Model. Strip captions. Return ONLY the prompt.`,
+In recreate: Image 1+ = My Model identity canvas (KEEP face/body). LAST = SOURCE pose/scene only. Put the My Model into the SOURCE pose — never keep the SOURCE woman's face. Strip captions. Return ONLY the prompt.`,
   },
   "flux-3-klein": {
     ...IMAGE_DEFAULT,

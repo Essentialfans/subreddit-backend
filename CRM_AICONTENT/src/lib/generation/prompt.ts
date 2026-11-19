@@ -23,7 +23,7 @@ export interface PromptBuildInput {
   clothing?: ClothingMode | null;
   durationSec?: number | null;
   aspect?: string | null;
-  /** Seedream prefers source-first; Nano prefers identity-first */
+  /** Recreate always uses identity-first (My Model = image_urls[0]). */
   recreateImageOrder?: "identity-first" | "source-first";
   /** User's kie.ai key — required for live LLM enhance */
   kieApiKey?: string | null;
@@ -72,11 +72,11 @@ function buildUserMessage(input: PromptBuildInput, formulaName: string): string 
   if (input.mode === "recreate" || input.hasSourceImage) {
     if (input.recreateImageOrder === "source-first") {
       bits.push(
-        "RECREATE MODE (Seedream source-first): Image 1 is SOURCE (pose/scene). Images 2+ are My Model identity (face+body). REPLACE the woman in Image 1 with the My Model from Images 2+."
+        "RECREATE MODE (legacy source-first): Image 1 is SOURCE (pose/scene). Images 2+ are My Model identity (face+body). REPLACE the woman in Image 1 with the My Model from Images 2+."
       );
     } else {
       bits.push(
-        "RECREATE MODE (identity-first): The FIRST images are My Model identity refs — use that person's FULL body and face (age, hair, physique, proportions). The LAST image is the SOURCE for pose, camera, scene, and background ONLY."
+        "RECREATE MODE (identity-first / priority): Images 1+ are My Model identity — KEEP that exact face and full body as the edit canvas. The LAST image is SOURCE for pose, camera, scene, and background ONLY — ignore the SOURCE woman's face and body."
       );
     }
     bits.push(
@@ -130,8 +130,8 @@ function sealIdentity(prompt: string, ctx: RecipeContext): string {
   if (isRecreate && name) {
     parts.push(
       ctx.recreateImageOrder === "source-first"
-        ? `Identity-first recreate: Image 1 is SOURCE to edit; Images 2+ are ${name}. Replace the SOURCE woman with ${name}'s full body and face — do NOT keep the SOURCE woman's face or body.`
-        : `Identity-first recreate: the primary woman must be ${name}'s full body and face from the My Model identity refs — do NOT keep the SOURCE woman's face, body, age, or figure. SOURCE supplies pose/scene only.`
+        ? `Identity priority: Images 2+ are ${name}. Replace the Image-1 SOURCE woman with ${name}'s full body and face — do NOT keep the SOURCE woman's face or body.`
+        : `Identity priority: Images 1+ are ${name} (KEEP face+body as the subject). LAST image is SOURCE pose/scene only — put ${name} into that pose; do NOT keep the SOURCE woman's face, body, age, or figure.`
     );
   } else if (name) {
     parts.push(
@@ -147,6 +147,7 @@ function sealIdentity(prompt: string, ctx: RecipeContext): string {
   // Drop a weak prior lock if we're about to re-seal harder rules.
   const withoutDup = trimmed
     .replace(/Identity-first recreate:[^.]*\./gi, " ")
+    .replace(/Identity priority:[^.]*\./gi, " ")
     .replace(/NO text in the output:[^.]*\./gi, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -186,7 +187,7 @@ export async function enhancePrompt(
         system: isRecreate
           ? `${recipe.systemPrompt}
 
-RECREATE OVERRIDE (identity-first): Identity reference images define the FULL person (face + body shape + age + proportions). The SOURCE image is only for pose, camera, scene, and background. Never keep the SOURCE woman's face or body. If multiple people are in SOURCE, replace the primary/left woman with the named My Model; follow Extra direction for anyone else. Always strip ALL text, captions, overlays, watermarks, and speech bubbles from the SOURCE — output must have zero typography. Generate a NEW photo, not a light edit of SOURCE.`
+RECREATE OVERRIDE (identity priority): Images 1+ are the My Model identity canvas — that person's FULL face + body + age + proportions MUST appear in the output. The LAST image is SOURCE for pose, camera, scene, and background ONLY — never keep the SOURCE woman's face or body. If SOURCE has multiple people, the primary/left woman becomes the named My Model; follow Extra direction for anyone else. Strip ALL text, captions, overlays, watermarks, and speech bubbles. Generate a NEW photo of the My Model in the SOURCE pose — not a light edit that leaves the SOURCE woman.`
           : recipe.systemPrompt,
         user: buildUserMessage(input, recipe.formulaName),
       });

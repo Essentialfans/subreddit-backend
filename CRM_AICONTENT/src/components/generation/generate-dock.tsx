@@ -331,15 +331,15 @@ export function GenerateDock({
 
     try {
       const hasSource = jobMode === "recreate" && Boolean(jobSourceUrl.trim());
-      const identityUrls = jobCreator?.refs.map((r) => r.publicUrl) ?? [];
+      // Identity MUST be image_urls[0] (Seedream edit canvas + Nano refs).
+      // Cover first, then face/body refs — SOURCE always last for pose/scene only.
+      const identityUrls = [
+        ...(jobCreator?.coverUrl ? [jobCreator.coverUrl] : []),
+        ...(jobCreator?.refs.map((r) => r.publicUrl) ?? []),
+      ].filter((url, i, arr) => Boolean(url) && arr.indexOf(url) === i);
       const activeGenId =
         jobMode === "presets" ? jobPresetQuality : jobGenModelId;
-      // Seedream i2i edits image_urls[0] — put SOURCE first so we edit the scene,
-      // then identity refs. Nano Banana prefers identity refs first.
-      const seedreamSourceFirst = activeGenId.startsWith("seedream");
-      const recreateImageOrder = seedreamSourceFirst
-        ? "source-first"
-        : "identity-first";
+      const recreateImageOrder = "identity-first" as const;
       const enhanceRes = await fetch("/api/generation/enhance", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -375,24 +375,15 @@ export function GenerateDock({
         jobClothing === "external" && jobExternalClothingUrl.trim()
           ? [jobExternalClothingUrl.trim()]
           : [];
-      // Recreate image order:
-      // - Seedream: SOURCE first (edit canvas), then identity (+ clothing)
-      // - Others: identity first, SOURCE last (pose/scene only)
+      // Recreate: My Model identity first (wins face/body), SOURCE last (pose/scene).
       const imageUrls =
         jobMode === "recreate"
-          ? seedreamSourceFirst
-            ? [
-                jobSourceUrl.trim(),
-                ...identityUrls,
-                ...jobExtraRefs,
-                ...clothingUrls,
-              ].filter(Boolean)
-            : [
-                ...identityUrls,
-                ...jobExtraRefs,
-                ...clothingUrls,
-                jobSourceUrl.trim(),
-              ].filter(Boolean)
+          ? [
+              ...identityUrls,
+              ...jobExtraRefs,
+              ...clothingUrls,
+              jobSourceUrl.trim(),
+            ].filter(Boolean)
           : [...identityUrls, ...jobExtraRefs];
 
       const selectedModelId =
@@ -746,16 +737,16 @@ export function GenerateDock({
                 ))}
               </div>
               <p className="max-w-[240px] text-[10px] leading-snug text-muted-foreground">
-                Body always from My Model (never the source woman). Clothing
-                picks outfit only
+                Priority: My Model face + body first; source image only for
+                pose/scene. Clothing picks outfit only
                 {clothing === "source"
                   ? " (keep source outfit on model body)."
                   : clothing === "external"
                     ? " (upload outfit ref)."
                     : " (use model’s usual look)."}{" "}
-                Captions/text on the source are removed. On Seedream, Keep pose
-                + Source clothing can still stick to the source face — retry if
-                needed, or try Nano Banana Pro for stronger identity swaps.
+                Captions/text on the source are removed. Seedream + Nano both
+                get identity images as the edit canvas so the source woman
+                cannot win.
               </p>
             </div>
           ) : null}

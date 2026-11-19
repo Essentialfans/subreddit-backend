@@ -54,9 +54,8 @@ export async function POST(request: Request) {
       clothing: body.clothing ?? null,
       durationSec: body.durationSec ?? catalog?.defaultDuration ?? null,
       aspect: body.aspect ?? catalog?.defaultAspect ?? null,
-      recreateImageOrder:
-        body.recreateImageOrder ??
-        (body.modelId?.startsWith("seedream") ? "source-first" : "identity-first"),
+      // Identity always first — Seedream edits image_urls[0], so My Model must be [0].
+      recreateImageOrder: body.recreateImageOrder ?? "identity-first",
       kieApiKey,
     });
 
