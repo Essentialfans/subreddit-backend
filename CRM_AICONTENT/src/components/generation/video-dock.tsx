@@ -1187,7 +1187,12 @@ export function VideoDock({
             <button
               type="button"
               onClick={() => void onGenerate()}
-              className="inline-flex h-10 items-center gap-2 rounded-full bg-primary px-5 text-sm font-semibold text-primary-foreground hover:bg-primary/90"
+              title={
+                activeJobs > 0
+                  ? "Start another video while others finish"
+                  : "Generate video"
+              }
+              className="inline-flex h-10 cursor-pointer items-center gap-2 rounded-full bg-primary px-5 text-sm font-semibold text-primary-foreground hover:bg-primary/90"
             >
               {activeJobs > 0 ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -1195,7 +1200,7 @@ export function VideoDock({
                 <Sparkles className="h-4 w-4" />
               )}
               {activeJobs > 0
-                ? `Generate video (${activeJobs} running)`
+                ? `Generate another (${activeJobs} running)`
                 : "Generate video"}
             </button>
           </div>

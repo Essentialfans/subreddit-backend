@@ -1165,7 +1165,12 @@ export function GenerateDock({
             <button
               type="button"
               onClick={() => void onGenerate()}
-              className="inline-flex h-10 items-center gap-2 rounded-full bg-primary px-5 text-sm font-semibold text-primary-foreground hover:bg-primary/90"
+              title={
+                activeJobs > 0
+                  ? "Start another generation while others finish"
+                  : "Generate"
+              }
+              className="inline-flex h-10 cursor-pointer items-center gap-2 rounded-full bg-primary px-5 text-sm font-semibold text-primary-foreground hover:bg-primary/90"
             >
               {activeJobs > 0 ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -1173,7 +1178,7 @@ export function GenerateDock({
                 <Sparkles className="h-4 w-4" />
               )}
               {activeJobs > 0
-                ? `Generate (${activeJobs} running)`
+                ? `Generate another (${activeJobs} running)`
                 : "Generate"}
             </button>
           </div>
