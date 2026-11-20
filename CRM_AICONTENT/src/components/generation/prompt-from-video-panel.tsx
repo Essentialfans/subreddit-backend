@@ -53,6 +53,7 @@ export function PromptFromVideoPanel({
   const [error, setError] = useState("");
   const [prompt, setPrompt] = useState("");
   const [transcript, setTranscript] = useState("");
+  const [inventory, setInventory] = useState("");
   const [note, setNote] = useState("");
   const [keyReady, setKeyReady] = useState<boolean | null>(null);
 
@@ -97,6 +98,7 @@ export function PromptFromVideoPanel({
     setError("");
     setPrompt("");
     setTranscript("");
+    setInventory("");
     setNote("");
     setKeyframeUrls([]);
     setKeyframeTimesSec([]);
@@ -107,7 +109,7 @@ export function PromptFromVideoPanel({
     setUploadPct(0);
     try {
       const [{ frames, durationSec: dur }, uploadedVideo] = await Promise.all([
-        extractKeyframesFromVideoFile(file, 7),
+        extractKeyframesFromVideoFile(file, 8),
         uploadGenerationFile(file, setUploadPct),
       ]);
       setDurationSec(dur);
@@ -174,6 +176,7 @@ export function PromptFromVideoPanel({
         ok?: boolean;
         prompt?: string;
         transcript?: string;
+        inventory?: string;
         note?: string;
         error?: string;
       };
@@ -182,6 +185,7 @@ export function PromptFromVideoPanel({
       }
       setPrompt(json.prompt);
       setTranscript(json.transcript || "");
+      setInventory(json.inventory || "");
       setNote(json.note || "");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Prompt generation failed");
@@ -275,20 +279,31 @@ export function PromptFromVideoPanel({
             {durationSec ? (
               <p className="text-xs text-muted-foreground">
                 Duration ~{durationSec.toFixed(1)}s · {keyframeUrls.length}{" "}
-                keyframes
+                motion keyframes (peaks + start/end)
               </p>
             ) : null}
             {keyframeUrls.length ? (
               <div className="flex max-w-lg flex-wrap justify-center gap-2">
-                {keyframeUrls.map((url, i) => (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    key={url}
-                    src={url}
-                    alt={`Keyframe ${i + 1}`}
-                    className="h-16 w-12 rounded-md object-cover"
-                  />
-                ))}
+                {keyframeUrls.map((url, i) => {
+                  const t = keyframeTimesSec[i];
+                  const label =
+                    typeof t === "number"
+                      ? `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}`
+                      : `#${i + 1}`;
+                  return (
+                    <div key={url} className="flex flex-col items-center gap-1">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={url}
+                        alt={`Keyframe ${i + 1} at ${label}`}
+                        className="h-16 w-12 rounded-md object-cover"
+                      />
+                      <span className="text-[10px] text-muted-foreground">
+                        {label}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
             ) : null}
           </div>
@@ -515,6 +530,17 @@ export function PromptFromVideoPanel({
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
         />
+        {inventory ? (
+          <details
+            open
+            className="rounded-xl border border-border bg-muted/30 p-3 text-xs text-muted-foreground"
+          >
+            <summary className="cursor-pointer font-medium text-foreground">
+              Keyframe inventory (wardrobe / exposure)
+            </summary>
+            <pre className="mt-2 whitespace-pre-wrap font-sans">{inventory}</pre>
+          </details>
+        ) : null}
         {transcript ? (
           <details className="rounded-xl border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
             <summary className="cursor-pointer font-medium text-foreground">
