@@ -60,9 +60,16 @@ export function clothingInstruction(ctx: RecipeContext): string {
   }
 }
 
-/** Always strip typography that leaks from meme / caption source stills. */
-export function recreateNoTextRule(): string {
-  return "NO text in the output: remove every caption, overlay, watermark, logo, speech bubble, sticker, subtitle, and typography from the SOURCE — clean photo only, zero readable letters.";
+/** Strip meme/caption overlays; keep in-scene signs when the user asks for readable text. */
+export function recreateNoTextRule(userText?: string): string {
+  if (
+    /readable|keep the text|text behind|map text|signage|keep text/i.test(
+      userText || ""
+    )
+  ) {
+    return "Keep in-scene background text (maps, signs, posters) sharp and readable. Still remove meme captions, speech bubbles, watermarks, and sticker overlays floating on the photo.";
+  }
+  return "Remove meme captions, speech bubbles, watermarks, logos, and sticker overlays. In-scene background signs may stay if they belong to the environment.";
 }
 
 /** Hard face keep-list — Seedream/Nano respond better to explicit preserve lists. */
@@ -71,22 +78,15 @@ export function recreateFaceKeepList(name: string): string {
 }
 
 /**
- * Build a recreate prompt with numbered Image roles (Image1 / Image2 / …).
- * identityCount = how many leading images are My Model refs (before SOURCE last).
+ * Build a recreate prompt as a person-swap (Nano Banana / Seedream best practice).
+ * Image1 = My Model identity. Last image = target scene (pose/outfit/background).
+ * Keep image count low (2–3) — extra refs dilute the swap.
  */
 export function recreateFallback(userText: string, ctx: RecipeContext): string {
   const name = ctx.modelName?.trim() || "the subject";
   const identityCount = Math.max(1, ctx.identityRefCount ?? 1);
   const sourceIndex = ctx.sourceImageIndex ?? identityCount + 1;
-  const identityRange =
-    identityCount === 1
-      ? "Image1"
-      : `Image1–Image${identityCount}`;
   const sourceLabel = `Image${sourceIndex}`;
-  const pose =
-    ctx.keepPose !== false
-      ? `CHANGE: put ${name} from Image1 into the exact pose, camera angle, framing, and hand/leg placement of ${sourceLabel}.`
-      : `CHANGE: place ${name} from Image1 into the scene/setting of ${sourceLabel}; pose may adjust slightly.`;
   const clothes = clothingInstruction(ctx);
   const extra = userText.replace(/@[a-zA-Z0-9_-]+/g, "").trim();
   const sourceFirst = ctx.recreateImageOrder === "source-first";
@@ -95,28 +95,34 @@ export function recreateFallback(userText: string, ctx: RecipeContext): string {
     return joinParts(
       `Edit Image1 (SOURCE scene). REPLACE the woman with ${name} from Image2+.`,
       recreateFaceKeepList(name),
-      pose,
       clothes,
-      recreateNoTextRule(),
+      recreateNoTextRule(userText),
       extra ? `Extra direction: ${extra}.` : "",
       "Photoreal, sharp face matching Image2+, natural skin."
     );
   }
 
+  // Canonical person-swap prompt (Image1 identity → ImageN scene).
   return joinParts(
-    `Generate a NEW photoreal photo of ${name}.`,
-    `Image roles: ${identityRange} = ${name} My Model identity (ONLY face/hair/body reference). ${sourceLabel} = SOURCE pose/scene/background ONLY.`,
-    `${identityRange} @Image1 is the sole identity for ${name}. ${sourceLabel} must NOT contribute face, hair color, hair length, ethnicity, age, or body shape.`,
-    pose,
+    `PERSON SWAP: Use Image1 as the ONLY identity source for ${name} (face, hair, skin, age, body).`,
+    identityCount > 1
+      ? `Image2 also shows ${name} for extra identity detail — still the same person as Image1.`
+      : "",
+    `Use ${sourceLabel} as the target scene only: pose, camera, framing, background, and composition.`,
+    `Transfer ${name}'s identity from Image1 into the person in ${sourceLabel}. Preserve ${sourceLabel}'s pose, clothing, lighting, camera angle, background, and composition.`,
     recreateFaceKeepList(name),
-    `If ${sourceLabel} has multiple people: the primary/left woman becomes ${name} from Image1; other people follow Extra direction only.`,
+    `The face in the output must be Image1's ${name} — never the face that was in ${sourceLabel} (SOURCE face is scrubbed/unusable on purpose).`,
     clothes,
-    recreateNoTextRule(),
+    ctx.keepPose !== false
+      ? `Keep the exact pose and hand placement from ${sourceLabel}.`
+      : `Scene from ${sourceLabel}; pose may adjust slightly.`,
+    recreateNoTextRule(userText),
     extra
-      ? `Extra direction (do not override identity): ${extra}.`
-      : `Keep ${sourceLabel}'s background, setting, and lighting.`,
-    `FAILURE if the result looks like the woman in ${sourceLabel} or a face-mix. Success only if a stranger would recognize Image1's ${name}.`,
-    "Photoreal, sharp face, natural skin, coherent lighting."
+      ? `Extra direction (must not override Image1 identity): ${extra}.`
+      : "",
+    `Match skin texture, shadows, and white balance so ${name} looks naturally photographed in ${sourceLabel}'s scene.`,
+    `FAILURE = looking like the original ${sourceLabel} woman. SUCCESS = clearly recognizable as Image1's ${name}.`,
+    "Photoreal, sharp face, natural skin."
   );
 }
 

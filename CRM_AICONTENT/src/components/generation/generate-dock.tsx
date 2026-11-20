@@ -37,6 +37,7 @@ import {
 } from "@/lib/generation/presets";
 import { parseAtMentions } from "@/lib/generation/prompt";
 import { uploadGenerationFile } from "@/lib/generation/upload-client";
+import { scrubSourceFacesForRecreate } from "@/lib/generation/prepare-media";
 import { saveOutputToGallery } from "@/lib/outputs/client";
 import { UploadProgressBar } from "@/components/generation/upload-progress";
 import "./generate-dock.css";
@@ -331,42 +332,61 @@ export function GenerateDock({
 
     try {
       const hasSource = jobMode === "recreate" && Boolean(jobSourceUrl.trim());
-      // Identity MUST be image_urls[0] (Seedream edit canvas + Nano refs).
-      // Cover + face/body refs, primary face duplicated once to overweight identity.
+      const activeGenId =
+        jobMode === "presets" ? jobPresetQuality : jobGenModelId;
+      const isNano = activeGenId.startsWith("nano-banana");
+
+      // Person-swap works best with few images: Image1 = My Model face, last = SOURCE.
+      // Too many refs (old Image6 pattern) lets the SOURCE woman win.
       const uniqueIdentity = [
         ...(jobCreator?.coverUrl ? [jobCreator.coverUrl] : []),
         ...(jobCreator?.refs.map((r) => r.publicUrl) ?? []),
-      ]
-        .filter((url, i, arr) => Boolean(url) && arr.indexOf(url) === i)
-        .slice(0, 3);
+      ].filter((url, i, arr) => Boolean(url) && arr.indexOf(url) === i);
       const primaryIdentity = uniqueIdentity[0];
+      const secondaryIdentity = uniqueIdentity.find((u) => u !== primaryIdentity);
+      // Nano: 1 identity (+ optional 2nd). Seedream: up to 2 identity. Never dump all refs.
       const identityUrls = primaryIdentity
-        ? [primaryIdentity, primaryIdentity, ...uniqueIdentity.slice(1)].slice(
-            0,
-            4
-          )
+        ? isNano
+          ? secondaryIdentity
+            ? [primaryIdentity, secondaryIdentity]
+            : [primaryIdentity]
+          : secondaryIdentity
+            ? [primaryIdentity, secondaryIdentity]
+            : [primaryIdentity]
         : [];
+
+      // Scrub SOURCE face so the model cannot copy it — pose/outfit/scene stay.
+      let scrubbedSourceUrl = jobSourceUrl.trim();
+      if (jobMode === "recreate" && scrubbedSourceUrl) {
+        try {
+          const scrubbed = await scrubSourceFacesForRecreate(scrubbedSourceUrl);
+          scrubbedSourceUrl = await uploadGenerationFile(
+            new File([scrubbed], "source-face-scrubbed.jpg", {
+              type: "image/jpeg",
+            })
+          );
+        } catch {
+          // If scrub fails (CORS etc.), still continue — prompt + short list remain.
+        }
+      }
+
       const clothingUrls =
         jobMode === "recreate" &&
         jobClothing === "external" &&
         jobExternalClothingUrl.trim()
           ? [jobExternalClothingUrl.trim()]
           : [];
-      // Recreate: My Model identity first (wins face/body), SOURCE last (pose/scene).
+
+      // Recreate: identity first, SOURCE last. Skip extraRefs on recreate (they dilute).
       const imageUrls =
         jobMode === "recreate"
-          ? [
-              ...identityUrls,
-              ...jobExtraRefs,
-              ...clothingUrls,
-              jobSourceUrl.trim(),
-            ].filter(Boolean)
+          ? [...identityUrls, ...clothingUrls, scrubbedSourceUrl].filter(
+              Boolean
+            )
           : [...identityUrls, ...jobExtraRefs];
       const identityRefCount = identityUrls.length;
       const sourceImageIndex =
         jobMode === "recreate" && hasSource ? imageUrls.length : undefined;
-      const activeGenId =
-        jobMode === "presets" ? jobPresetQuality : jobGenModelId;
       const recreateImageOrder = "identity-first" as const;
       const enhanceRes = await fetch("/api/generation/enhance", {
         method: "POST",
@@ -377,7 +397,7 @@ export function GenerateDock({
           modelName: jobCreator?.name,
           modelId: activeGenId,
           presetHint: jobMode === "presets" ? preset?.promptHint : undefined,
-          // Recreate uses locked deterministic prompt server-side (ignore toggle).
+          // Recreate uses locked person-swap prompt server-side (ignore toggle).
           enhanceWithAi:
             jobMode === "recreate" ? false : jobEnhance || jobMode !== "free",
           hasImage: Boolean(
@@ -754,16 +774,14 @@ export function GenerateDock({
                 ))}
               </div>
               <p className="max-w-[240px] text-[10px] leading-snug text-muted-foreground">
-                Priority: My Model face + body first; source image only for
-                pose/scene. Clothing picks outfit only
+                Selected My Model = the face (always). Source upload = pose /
+                scene / outfit only — we scrub the source face before generate
+                so it cannot win. Clothing picks outfit only
                 {clothing === "source"
                   ? " (keep source outfit on model body)."
                   : clothing === "external"
                     ? " (upload outfit ref)."
-                    : " (use model’s usual look)."}{" "}
-                Captions/text on the source are removed. Seedream + Nano both
-                get identity images as the edit canvas so the source woman
-                cannot win.
+                    : " (use model’s usual look)."}
               </p>
             </div>
           ) : null}
