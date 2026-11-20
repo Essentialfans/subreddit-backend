@@ -66,6 +66,30 @@ function RatioIcon({ id }: { id: string }) {
   return <Monitor className="h-3.5 w-3.5" />;
 }
 
+/** Parse API JSON; surface auth/HTML failures clearly instead of a cryptic DOCTYPE error. */
+async function readApiJson<T extends { ok?: boolean; error?: string }>(
+  res: Response
+): Promise<T> {
+  const text = await res.text();
+  const trimmed = text.trim();
+  if (trimmed.startsWith("<!DOCTYPE") || trimmed.startsWith("<html")) {
+    throw new Error(
+      res.status === 401 || res.redirected
+        ? "Session expired — refresh and sign in again."
+        : "Server returned a web page instead of JSON. Refresh and try again."
+    );
+  }
+  try {
+    return JSON.parse(text || "{}") as T;
+  } catch {
+    throw new Error(
+      trimmed
+        ? `Bad server response (${res.status}): ${trimmed.slice(0, 120)}`
+        : `Empty server response (${res.status})`
+    );
+  }
+}
+
 async function downloadAsset(url: string, filename: string) {
   try {
     const res = await fetch(url);
@@ -309,12 +333,12 @@ export function VideoDock({
             refLabels: hasStartingFrame ? ["starting-frame"] : [],
           }),
         });
-        const enhanceJson = (await enhanceRes.json()) as {
+        const enhanceJson = await readApiJson<{
           ok: boolean;
           prompt?: string;
           error?: string;
           formulaName?: string;
-        };
+        }>(enhanceRes);
         if (enhanceRes.ok && enhanceJson.ok && enhanceJson.prompt) {
           // Recipe already includes motion/camera language for this model —
           // do not append a generic video suffix (that would mix formats).
@@ -392,11 +416,11 @@ export function VideoDock({
           audioUrl: jobAudioUrl || null,
         }),
       });
-      const created = (await createRes.json()) as {
+      const created = await readApiJson<{
         ok: boolean;
         taskId?: string;
         error?: string;
-      };
+      }>(createRes);
       if (!createRes.ok || !created.ok || !created.taskId) {
         throw new Error(created.error || "Could not start video job");
       }
@@ -1257,14 +1281,14 @@ async function pollVideoTask(taskId: string): Promise<string> {
       `/api/generation/status?taskId=${encodeURIComponent(taskId)}`,
       { cache: "no-store" }
     );
-    const json = (await res.json()) as {
+    const json = await readApiJson<{
       ok: boolean;
       status?: string;
       videoUrls?: string[];
       resultUrls?: string[];
       failMsg?: string;
       error?: string;
-    };
+    }>(res);
     if (!res.ok || !json.ok) throw new Error(json.error || "Status failed");
     if (json.status === "failed") {
       throw new Error(json.failMsg || "Video generation failed");
