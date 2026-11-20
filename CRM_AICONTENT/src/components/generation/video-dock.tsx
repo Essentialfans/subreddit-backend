@@ -32,6 +32,7 @@ import type { CreatorModel } from "@/lib/models/types";
 import { RATIO_OPTIONS } from "@/lib/generation/presets";
 import { uploadGenerationFile } from "@/lib/generation/upload-client";
 import { ensureStillFitsModel } from "@/lib/generation/prepare-media";
+import { videoNoTextRule } from "@/lib/generation/prompt-recipes";
 import { saveOutputToGallery } from "@/lib/outputs/client";
 import { UploadProgressBar } from "@/components/generation/upload-progress";
 import "./generate-dock.css";
@@ -387,17 +388,22 @@ export function VideoDock({
       }
 
       // Starting frame = the video. Keep outfit/look/scene unless the prompt says otherwise.
+      // Never keep burned-in captions / meme overlays from that frame.
       if (acceptsPrompt && hasStartingFrame) {
         finalPrompt = [
           `STARTING FRAME LOCK: Animate the attached starting-frame image into video.`,
           `Keep the same person, face, hair, body, clothing/outfit, colors, and background from that starting frame.`,
           `Do NOT change clothes, identity, or restyle the subject unless the user prompt explicitly asks for it.`,
+          `Do NOT keep or recreate burned-in captions, meme text, subtitles, stickers, or watermarks from the starting frame — clean video, no on-screen text.`,
           `Only add motion / camera as described. Output aspect ratio ${jobRatio}.`,
           finalPrompt,
+          videoNoTextRule(finalPrompt),
         ].join(" ");
       } else if (acceptsPrompt && jobCreator?.name) {
         // No starting frame — My Model can guide appearance.
-        finalPrompt = `${finalPrompt} Featuring ${jobCreator.name}, matching My Models reference identity.`;
+        finalPrompt = `${finalPrompt} Featuring ${jobCreator.name}, matching My Models reference identity. ${videoNoTextRule(finalPrompt)}`;
+      } else if (acceptsPrompt) {
+        finalPrompt = `${finalPrompt} ${videoNoTextRule(finalPrompt)}`;
       }
 
       // Motion-control / i2v: the inserted still is the character + outfit source of truth.

@@ -72,6 +72,22 @@ export function recreateNoTextRule(userText?: string): string {
   return "Remove meme captions, speech bubbles, watermarks, logos, and sticker overlays. In-scene background signs may stay if they belong to the environment.";
 }
 
+/**
+ * Video outputs must not burn in source meme captions / "Wait for it…" overlays.
+ * In-scene environment text (weather maps, street signs) may stay unless the user
+ * also asked for a clean plate.
+ */
+export function videoNoTextRule(userText?: string): string {
+  if (
+    /readable|keep the text|map text|signage|keep text|weather map/i.test(
+      userText || ""
+    )
+  ) {
+    return "Keep in-scene environment text (maps, signs) readable. Still NO burned-in captions, meme overlays, speech bubbles, subtitles, stickers, or watermarks on the video.";
+  }
+  return "NO burned-in captions, meme text, subtitles, stickers, logos, or watermarks on the video. Do not recreate source overlay text like \"Wait for it…\". Clean plate — spoken dialogue is audio only, never on-screen text.";
+}
+
 /** Hard face keep-list — Seedream/Nano respond better to explicit preserve lists. */
 export function recreateFaceKeepList(name: string): string {
   return `KEEP from Image 1 (${name}) exactly: face geometry, eye shape/color, nose, lips, jawline, cheekbones, eyebrows, skin tone, freckles/moles, hair color, hair length, hair texture, age, and body proportions. Do not blend with the LAST image's face.`;
@@ -207,6 +223,8 @@ Rules for Wan hyperreal:
 - Prefer: slow push-in / tracking / orbit / locked-off, 35–85mm, shallow DoF, natural skin, subtle film grain, motivated real-world light
 - Never stack empty words like "cinematic, 8K, masterpiece"
 - If image-to-video context is given, do NOT re-describe the still — focus on motion + camera + light change
+- Never recreate burned-in captions, meme overlays, subtitles, or watermark text from a source still/clip
+- Always end with: no captions, no subtitles, no watermark, no on-screen text overlays
 - Return ONLY the final prompt text`,
     fallbackExpand: (userText, ctx) =>
       joinParts(
@@ -219,6 +237,7 @@ Rules for Wan hyperreal:
           ? "Keep identity and wardrobe locked to the source still; animate motion only."
           : "",
         "Quiet natural ambience, no music.",
+        videoNoTextRule(userText),
         HYPERREAL_NEG,
         refsLine(ctx)
       ),
@@ -239,13 +258,15 @@ Rules for Wan hyperreal:
     ],
     systemPrompt: `You are a Wan 3.0 Prime video prompt engineer.
 Same Alibaba Wan formula as Wan 3.0 (Entity + Scene + Motion + Aesthetic + Style), but keep it SHORT and punchy for fast cutdowns (45–80 words).
-ONE subject, ONE action, ONE camera move. Photoreal. Return ONLY the prompt.`,
+ONE subject, ONE action, ONE camera move. Photoreal.
+Never recreate burned-in captions / meme overlays / subtitles. Return ONLY the prompt.`,
     fallbackExpand: (userText, ctx) =>
       joinParts(
         "Photoreal, natural light, clean grade.",
         identityLine(ctx),
         userText || "Subject in a simple real-world scene.",
         "One clear action. Medium shot, slow push-in, 50mm.",
+        videoNoTextRule(userText),
         HYPERREAL_NEG,
         refsLine(ctx)
       ),

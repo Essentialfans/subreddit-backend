@@ -1,5 +1,6 @@
 import { runPromptLlm, type PromptLlmId } from "@/lib/kie/prompt-llms";
 import { transcribeMediaUrl } from "@/lib/generation/transcribe";
+import { videoNoTextRule } from "@/lib/generation/prompt-recipes";
 
 export const VIDEO_RECREATE_RECIPE_ID = "wan-recreate-identity";
 
@@ -30,6 +31,7 @@ Rules:
 - Do NOT soft-censor. If skin/buttocks/breasts/clothing lift is visible, say so plainly.
 - Do NOT describe face, hair color, ethnicity, or body type (identity comes from My Model later).
 - Wardrobe fabric/color/cut/slits/lace-ups matter.
+- IGNORE burned-in captions / meme overlays / \"Wait for it…\" / subtitles / stickers / watermarks — never copy that text into wardrobe or set. If present, write overlay_text: ignore.
 - Use the FRAME numbers and timestamps given in the user message (do not renumber from 1 unless told).
 - No Midjourney flags. No preamble. Only FRAME lines.`;
 }
@@ -68,12 +70,17 @@ Full-timeline inventory (CRITICAL):
 - Do not euphemize ("adjusts dress"). If inventory says bare buttock / dress pulled up / slit open — write that.
 - Wardrobe always follows the inventory/source frames, never My Model clothes.
 
+NO on-screen text (CRITICAL — product rule):
+- NEVER write or recreate burned-in captions, meme overlays, \"Wait for it…\", subtitles, stickers, or watermarks from the source.
+- Spoken lines are AUDIO / dialogue only — they must NOT appear as text on screen.
+- Always end negatives with: no captions, no subtitles, no watermark, no text overlays, no meme text.
+
 Output (one paste-ready prompt only — no markdown fences, no commentary):
-1) Overall setup (set, wardrobe, camera, aspect, duration)
+1) Overall setup (set, wardrobe, camera, aspect, duration) — no overlay text
 2) Dense timestamped beats (mm:ss) covering start → every action change → end
-3) Verbatim dialogue tied to timing when possible
+3) Verbatim dialogue tied to timing when possible (audio only)
 4) Natural voice / ambience
-5) Short negatives in plain words (not --no flags)`;
+5) Short negatives including no captions / no on-screen text`;
 }
 
 export function buildWanRecreateUserMessage(options: {
@@ -108,9 +115,26 @@ export function buildWanRecreateUserMessage(options: {
     options.transcript.trim() || "(no speech detected)",
     "",
     "Write the paste-ready Wan recreate NARRATIVE prompt now — exact choreography of the full video.",
+    "Do NOT include any on-screen captions or overlay text from the source frames.",
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+/** Strip accidental caption instructions and seal the no-text product rule. */
+export function sealVideoNoText(prompt: string, userHint?: string): string {
+  const cleaned = prompt
+    .replace(/\bwait for it[.…]*\b/gi, " ")
+    .replace(/\bon-?screen text[^.]*\./gi, " ")
+    .replace(/\bburned-?in caption[^.]*\./gi, " ")
+    .replace(/\smeme (caption|overlay|text)[^.]*\./gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const rule = videoNoTextRule(userHint);
+  if (cleaned.toLowerCase().includes("no burned-in captions")) {
+    return cleaned;
+  }
+  return `${cleaned} ${rule}`.replace(/\s+/g, " ").trim();
 }
 
 /** Midjourney / SD flag soup — Grok sometimes emits this when under-instructed. */
@@ -358,14 +382,14 @@ Rewrite the FULL Wan prompt covering the entire clip and INCLUDE those beats wit
   }
 
   return {
-    prompt,
+    prompt: sealVideoNoText(prompt),
     transcript,
     inventory,
     llm: options.llm,
     recipeId: VIDEO_RECREATE_RECIPE_ID,
     frameCount: options.keyframeUrls.length,
     note: options.lookAlike
-      ? "Look-alike on — review face/hair wording before generate."
-      : `Full-clip inventory (${options.keyframeUrls.length} frames). Identity stripped; attach My Model refs in Video studio.`,
+      ? "Look-alike on — review face/hair wording before generate. No on-screen captions."
+      : `Full-clip inventory (${options.keyframeUrls.length} frames). Identity stripped; no on-screen captions; attach My Model refs in Video studio.`,
   };
 }
