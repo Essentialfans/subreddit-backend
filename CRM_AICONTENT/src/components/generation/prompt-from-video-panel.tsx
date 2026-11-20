@@ -48,6 +48,7 @@ export function PromptFromVideoPanel({
   const [durationSec, setDurationSec] = useState<number | null>(null);
   const [uploadPct, setUploadPct] = useState<number | null>(null);
   const [preparing, setPreparing] = useState(false);
+  const [prepareStatus, setPrepareStatus] = useState("");
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -107,28 +108,54 @@ export function PromptFromVideoPanel({
     setPreviewUrl(URL.createObjectURL(file));
     setPreparing(true);
     setUploadPct(0);
+    setPrepareStatus("Capturing full-timeline frames…");
     try {
+      const extractPromise = extractKeyframesFromVideoFile(file, {
+        intervalSec: 0.33,
+        maxFrames: 48,
+        onProgress: (done, total) => {
+          setPrepareStatus(`Capturing frames ${done}/${total}…`);
+        },
+      });
+      const uploadPromise = uploadGenerationFile(file, setUploadPct);
       const [{ frames, durationSec: dur }, uploadedVideo] = await Promise.all([
-        extractKeyframesFromVideoFile(file, 8),
-        uploadGenerationFile(file, setUploadPct),
+        extractPromise,
+        uploadPromise,
       ]);
       setDurationSec(dur);
       setVideoUrl(uploadedVideo);
       setKeyframeTimesSec(frames.map((f) => f.timeSec));
 
-      const uploadedFrames: string[] = [];
-      for (let i = 0; i < frames.length; i++) {
-        const url = await uploadGenerationFile(
-          new File([frames[i].blob], `kf-${i + 1}.jpg`, { type: "image/jpeg" })
-        );
-        uploadedFrames.push(url);
+      setPrepareStatus(`Uploading ${frames.length} frames…`);
+      const uploadedFrames: string[] = new Array(frames.length);
+      const concurrency = 4;
+      let next = 0;
+      async function worker() {
+        while (next < frames.length) {
+          const i = next++;
+          uploadedFrames[i] = await uploadGenerationFile(
+            new File([frames[i].blob], `kf-${i + 1}.jpg`, {
+              type: "image/jpeg",
+            })
+          );
+          setPrepareStatus(
+            `Uploading frames ${uploadedFrames.filter(Boolean).length}/${frames.length}…`
+          );
+        }
       }
+      await Promise.all(
+        Array.from({ length: Math.min(concurrency, frames.length) }, () =>
+          worker()
+        )
+      );
       setKeyframeUrls(uploadedFrames);
+      setPrepareStatus("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not prepare clip");
       setVideoUrl("");
       setKeyframeUrls([]);
       setKeyframeTimesSec([]);
+      setPrepareStatus("");
     } finally {
       setUploadPct(null);
       setPreparing(false);
@@ -231,9 +258,9 @@ export function PromptFromVideoPanel({
               Source clip
             </p>
             <p className="mt-1 text-sm text-muted-foreground">
-              Drop the reel to recreate. We transcribe dialogue and build a Wan
-              prompt that uses <strong>My Model</strong> as who appears — not
-              the source face.
+              Drop the reel to recreate. We capture a dense full-timeline frame
+              grid, inventory every beat, then build a Wan prompt with{" "}
+              <strong>My Model</strong> as who appears — not the source face.
             </p>
           </div>
           <div className="flex flex-1 flex-col items-center justify-center gap-4 p-6">
@@ -276,34 +303,44 @@ export function PromptFromVideoPanel({
             {uploadPct !== null ? (
               <UploadProgressBar pct={uploadPct} label="Uploading clip…" />
             ) : null}
+            {prepareStatus ? (
+              <p className="text-xs text-muted-foreground">{prepareStatus}</p>
+            ) : null}
             {durationSec ? (
               <p className="text-xs text-muted-foreground">
                 Duration ~{durationSec.toFixed(1)}s · {keyframeUrls.length}{" "}
-                motion keyframes (peaks + start/end)
+                full-timeline frames (~every 0.3s)
               </p>
             ) : null}
             {keyframeUrls.length ? (
-              <div className="flex max-w-lg flex-wrap justify-center gap-2">
-                {keyframeUrls.map((url, i) => {
-                  const t = keyframeTimesSec[i];
-                  const label =
-                    typeof t === "number"
-                      ? `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}`
-                      : `#${i + 1}`;
-                  return (
-                    <div key={url} className="flex flex-col items-center gap-1">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={url}
-                        alt={`Keyframe ${i + 1} at ${label}`}
-                        className="h-16 w-12 rounded-md object-cover"
-                      />
-                      <span className="text-[10px] text-muted-foreground">
-                        {label}
-                      </span>
-                    </div>
-                  );
-                })}
+              <div className="max-h-40 max-w-lg overflow-y-auto">
+                <div className="flex flex-wrap justify-center gap-2">
+                  {keyframeUrls.map((url, i) => {
+                    const t = keyframeTimesSec[i];
+                    const label =
+                      typeof t === "number"
+                        ? `${Math.floor(t / 60)}:${String(
+                            Math.floor(t % 60)
+                          ).padStart(2, "0")}`
+                        : `#${i + 1}`;
+                    return (
+                      <div
+                        key={`${url}-${i}`}
+                        className="flex flex-col items-center gap-1"
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={url}
+                          alt={`Frame ${i + 1} at ${label}`}
+                          className="h-14 w-10 rounded-md object-cover"
+                        />
+                        <span className="text-[10px] text-muted-foreground">
+                          {label}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             ) : null}
           </div>
@@ -492,6 +529,10 @@ export function PromptFromVideoPanel({
             )}
             Generate prompt
           </button>
+          <p className="text-[11px] text-muted-foreground">
+            Inventories the full frame grid in batches — takes longer, but keeps
+            every action beat (use Grok 4.7).
+          </p>
 
           {error ? <p className="text-sm text-accent-red">{error}</p> : null}
           {keyReady === false ? (

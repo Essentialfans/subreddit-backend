@@ -1,4 +1,4 @@
-/** Browser-side keyframe grabs from a local File or blob URL. */
+/** Browser-side full-timeline keyframe grabs from a local File or blob URL. */
 
 export interface KeyframeCapture {
   blob: Blob;
@@ -6,6 +6,14 @@ export interface KeyframeCapture {
   index: number;
   /** Relative motion score vs previous sample (0 if unknown). */
   motionScore?: number;
+}
+
+export interface ExtractKeyframesOptions {
+  /** Target seconds between frames (default 0.33 ≈ 3fps grid). */
+  intervalSec?: number;
+  /** Hard cap so uploads/LLM stay practical (default 48). */
+  maxFrames?: number;
+  onProgress?: (done: number, total: number) => void;
 }
 
 function loadVideo(src: string): Promise<HTMLVideoElement> {
@@ -28,11 +36,13 @@ function loadVideo(src: string): Promise<HTMLVideoElement> {
 function seek(video: HTMLVideoElement, time: number): Promise<void> {
   return new Promise((resolve, reject) => {
     const dur = Number.isFinite(video.duration) ? video.duration : time;
-    const target = Math.min(Math.max(0, time), Math.max(0, dur - 0.05));
+    const target = Math.min(Math.max(0, time), Math.max(0, dur - 0.04));
 
+    let settled = false;
     const finish = () => {
+      if (settled) return;
+      settled = true;
       video.removeEventListener("seeked", onSeeked);
-      // Ensure the decoded frame is painted (some browsers need a tick).
       const rvfc = (
         video as HTMLVideoElement & {
           requestVideoFrameCallback?: (cb: () => void) => number;
@@ -49,11 +59,17 @@ function seek(video: HTMLVideoElement, time: number): Promise<void> {
     video.addEventListener("seeked", onSeeked);
     video.onerror = () => reject(new Error("Seek failed"));
 
+    // Timeout fallback if seeked never fires
+    const timer = window.setTimeout(() => finish(), 1200);
+
     if (Math.abs(video.currentTime - target) < 0.001) {
+      window.clearTimeout(timer);
       finish();
       return;
     }
     video.currentTime = target;
+    const clear = () => window.clearTimeout(timer);
+    video.addEventListener("seeked", clear, { once: true });
   });
 }
 
@@ -74,25 +90,9 @@ async function drawFrame(
   return { canvas, ctx };
 }
 
-async function captureFrame(
-  video: HTMLVideoElement,
-  timeSec: number,
-  index: number,
-  motionScore?: number
-): Promise<KeyframeCapture> {
-  await seek(video, timeSec);
-  const { canvas } = await drawFrame(video, 1280);
-  const blob = await new Promise<Blob | null>((resolve) =>
-    canvas.toBlob((b) => resolve(b), "image/jpeg", 0.9)
-  );
-  if (!blob) throw new Error("Keyframe encode failed");
-  return { blob, timeSec, index, motionScore };
-}
-
 function l1Delta(a: Uint8ClampedArray, b: Uint8ClampedArray): number {
   const n = Math.min(a.length, b.length);
   let sum = 0;
-  // Sample every 4th pixel channel group for speed
   for (let i = 0; i < n; i += 16) {
     sum +=
       Math.abs(a[i] - b[i]) +
@@ -103,79 +103,48 @@ function l1Delta(a: Uint8ClampedArray, b: Uint8ClampedArray): number {
 }
 
 /**
- * Dense probe → keep start/end + highest-motion moments (attention grabs).
+ * Build a dense timeline grid covering the whole clip.
+ * Interval auto-widens only when maxFrames would otherwise be exceeded.
  */
-export async function pickMotionKeyframeTimes(
-  video: HTMLVideoElement,
-  keep = 8
-): Promise<{ times: number[]; scores: Map<number, number> }> {
-  const durationSec = video.duration;
-  const end = Math.max(0, durationSec - 0.08);
-  const probeCount = Math.min(36, Math.max(16, Math.round(durationSec * 2)));
-  const probes: { t: number; score: number }[] = [];
-  let prev: Uint8ClampedArray | null = null;
+export function buildFullTimelineTimes(
+  durationSec: number,
+  intervalSec = 0.33,
+  maxFrames = 48
+): number[] {
+  const end = Math.max(0.05, durationSec - 0.04);
+  const idealCount = Math.floor(end / intervalSec) + 1;
+  const step =
+    idealCount > maxFrames ? end / Math.max(1, maxFrames - 1) : intervalSec;
 
-  for (let i = 0; i < probeCount; i++) {
-    const t =
-      i === 0
-        ? 0.05
-        : i === probeCount - 1
-          ? end
-          : (durationSec * i) / (probeCount - 1);
-    await seek(video, t);
-    const { ctx, canvas } = await drawFrame(video, 160);
-    const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-    const score = prev ? l1Delta(prev, data) : 0;
-    probes.push({ t, score });
-    prev = data;
+  const times: number[] = [];
+  for (let t = 0.05; t <= end + 0.001; t += step) {
+    times.push(Math.min(end, Number(t.toFixed(3))));
+    if (times.length >= maxFrames) break;
   }
-
-  const scores = new Map<number, number>();
-  for (const p of probes) scores.set(p.t, p.score);
-
-  // Always keep start + end
-  const chosen: number[] = [probes[0].t, probes[probes.length - 1].t];
-
-  // Rank by motion, enforce ≥0.7s spacing so peaks aren't duplicates
-  const ranked = [...probes]
-    .filter((p) => p.t > 0.3 && p.t < end - 0.2)
-    .sort((a, b) => b.score - a.score);
-
-  for (const p of ranked) {
-    if (chosen.length >= keep) break;
-    if (chosen.every((c) => Math.abs(c - p.t) >= 0.7)) {
-      chosen.push(p.t);
-    }
+  if (times[times.length - 1] < end - 0.02) {
+    if (times.length >= maxFrames) times[times.length - 1] = end;
+    else times.push(end);
   }
-
-  // Bias: ensure at least one sample in 35–55% window (common reveal zone)
-  const midLo = durationSec * 0.35;
-  const midHi = durationSec * 0.55;
-  const hasMid = chosen.some((t) => t >= midLo && t <= midHi);
-  if (!hasMid) {
-    const midCandidates = ranked.filter((p) => p.t >= midLo && p.t <= midHi);
-    const best = midCandidates[0] ?? {
-      t: durationSec * 0.45,
-      score: 0,
-    };
-    if (chosen.every((c) => Math.abs(c - best.t) >= 0.4)) {
-      if (chosen.length >= keep) chosen.splice(2, 1); // drop a weaker mid pick
-      chosen.push(best.t);
-      scores.set(best.t, best.score);
-    }
+  // De-dupe near-identical
+  const out: number[] = [];
+  for (const t of times) {
+    if (!out.length || Math.abs(out[out.length - 1] - t) > 0.08) out.push(t);
   }
-
-  chosen.sort((a, b) => a - b);
-  return { times: chosen.slice(0, keep), scores };
+  return out;
 }
 
 /**
- * Grab start / motion peaks / end as JPEG blobs.
+ * Capture a dense full-timeline grid so the inventory can recreate every beat.
  */
 export async function extractKeyframesFromVideoFile(
   file: File,
-  count = 8
+  options: ExtractKeyframesOptions | number = {}
 ): Promise<{ frames: KeyframeCapture[]; durationSec: number }> {
+  const opts: ExtractKeyframesOptions =
+    typeof options === "number" ? { maxFrames: options } : options;
+  const intervalSec = opts.intervalSec ?? 0.33;
+  const maxFrames = opts.maxFrames ?? 48;
+
   const objectUrl = URL.createObjectURL(file);
   try {
     const video = await loadVideo(objectUrl);
@@ -183,17 +152,74 @@ export async function extractKeyframesFromVideoFile(
     if (!durationSec || durationSec < 0.2) {
       throw new Error("Video has no readable duration");
     }
-    const { times, scores } = await pickMotionKeyframeTimes(video, count);
+
+    const times = buildFullTimelineTimes(durationSec, intervalSec, maxFrames);
+    opts.onProgress?.(0, times.length);
+
     const frames: KeyframeCapture[] = [];
+    let prevPixels: Uint8ClampedArray | null = null;
+
     for (let i = 0; i < times.length; i++) {
-      frames.push(
-        await captureFrame(video, times[i], i, scores.get(times[i]) ?? 0)
+      await seek(video, times[i]);
+      const { canvas, ctx } = await drawFrame(video, 960);
+      // Downsample in-place region for motion scoring
+      const tw = Math.max(1, Math.round(canvas.width / 8));
+      const th = Math.max(1, Math.round(canvas.height / 8));
+      const tiny = document.createElement("canvas");
+      tiny.width = tw;
+      tiny.height = th;
+      const tctx = tiny.getContext("2d");
+      if (!tctx) throw new Error("Could not score keyframe motion");
+      tctx.drawImage(canvas, 0, 0, tw, th);
+      const pixels = tctx.getImageData(0, 0, tw, th).data;
+      const motionScore = prevPixels ? l1Delta(prevPixels, pixels) : 0;
+      prevPixels = pixels;
+      void ctx;
+
+      const blob = await new Promise<Blob | null>((resolve) =>
+        canvas.toBlob((b) => resolve(b), "image/jpeg", 0.82)
       );
+      if (!blob) throw new Error("Keyframe encode failed");
+      frames.push({
+        blob,
+        timeSec: times[i],
+        index: i,
+        motionScore,
+      });
+      opts.onProgress?.(i + 1, times.length);
     }
+
     video.src = "";
     video.load();
     return { frames, durationSec };
   } finally {
     URL.revokeObjectURL(objectUrl);
   }
+}
+
+/** Pick a representative subset of URLs for the final Wan vision call. */
+export function pickRepresentativeIndices(
+  frames: { motionScore?: number; timeSec: number }[],
+  keep = 10
+): number[] {
+  if (frames.length <= keep) {
+    return frames.map((_, i) => i);
+  }
+  const chosen = new Set<number>([0, frames.length - 1]);
+  const ranked = frames
+    .map((f, i) => ({ i, score: f.motionScore ?? 0 }))
+    .filter((r) => r.i !== 0 && r.i !== frames.length - 1)
+    .sort((a, b) => b.score - a.score);
+  for (const r of ranked) {
+    if (chosen.size >= keep) break;
+    chosen.add(r.i);
+  }
+  // Fill evenly if motion ranking under-fills
+  if (chosen.size < keep) {
+    const step = frames.length / keep;
+    for (let k = 0; k < keep && chosen.size < keep; k++) {
+      chosen.add(Math.min(frames.length - 1, Math.round(k * step)));
+    }
+  }
+  return [...chosen].sort((a, b) => a - b);
 }

@@ -6,23 +6,31 @@ export const VIDEO_RECREATE_RECIPE_ID = "wan-recreate-identity";
 const EXPOSURE_RE =
   /\b(bare|butt|buttock|ass|cheek|lift|pulled\s*up|hike|slit\s*open|expos|flash|nude|naked|no\s*panty|without\s*pant|underwear|thong|breast|nipple|crotch|side\s*angle)\b/i;
 
+const INVENTORY_BATCH = 6;
+
 function formatMmSs(sec: number): string {
   const s = Math.max(0, sec);
   const m = Math.floor(s / 60);
   const r = Math.floor(s % 60);
+  const frac = Math.round((s % 1) * 10);
+  if (frac > 0) {
+    return `${String(m).padStart(2, "0")}:${String(r).padStart(2, "0")}.${frac}`;
+  }
   return `${String(m).padStart(2, "0")}:${String(r).padStart(2, "0")}`;
 }
 
 export function buildInventorySystemPrompt(): string {
-  return `You inventory source-video keyframes for a Wan recreate pipeline.
+  return `You inventory source-video keyframes for a Wan recreate pipeline that must EXACTLY copy the clip's action.
 
 For EACH attached image, output exactly one line:
-FRAME n @ mm:ss | wardrobe: … | exposure: none OR describe exactly (e.g. "black dress pulled up at side slit, bare left buttock visible from side") | motion: …
+FRAME n @ mm:ss | wardrobe: … | exposure: none OR describe exactly (e.g. "black dress pulled up at side slit, bare left buttock visible from side") | pose/motion: … | set: …
 
 Rules:
+- Cover what is literally visible in THAT frame — do not skip or soften.
 - Do NOT soft-censor. If skin/buttocks/breasts/clothing lift is visible, say so plainly.
-- Do NOT describe face, hair color, ethnicity, or body type of the person (identity comes from My Model later).
-- Wardrobe fabric/color/cut details matter.
+- Do NOT describe face, hair color, ethnicity, or body type (identity comes from My Model later).
+- Wardrobe fabric/color/cut/slits/lace-ups matter.
+- Use the FRAME numbers and timestamps given in the user message (do not renumber from 1 unless told).
 - No Midjourney flags. No preamble. Only FRAME lines.`;
 }
 
@@ -41,11 +49,11 @@ export function buildWanRecreateSystemPrompt(options: {
 - Refer to the subject as "the presenter from @Image1 / the reference images" or "${name} from the reference images".
 - DO describe wardrobe, set, props, motion, camera, timing, and dialogue exactly.`;
 
-  return `You are writing a ${options.videoModelLabel} VIDEO recreate prompt for AiInstaReels.
+  return `You are writing a ${options.videoModelLabel} VIDEO recreate prompt for AiInstaReels — goal: EXACT copy of the source clip's choreography, wardrobe, camera, and dialogue (with My Model identity).
 
 This is NOT Midjourney, NOT Stable Diffusion, NOT an image prompt.
 FORBIDDEN output: --ar, --stylize, --v, --q, --chaos, --sref, --cref, /imagine, parameter flag soup.
-REQUIRED: continuous narrative Wan video prompt with timed action beats.
+REQUIRED: continuous narrative Wan video prompt with dense timestamped beats covering the FULL clip.
 
 ${identityBlock}
 
@@ -53,15 +61,17 @@ Dialogue:
 - Lock dialogue VERBATIM from the provided transcript.
 - Prefer the ASR transcript over lip-reading guesses.
 
-Attention-grab / wardrobe motion (CRITICAL):
-- You are given a KEYFRAME INVENTORY. Every FRAME line whose exposure is NOT "none" MUST become an explicit timestamped beat in the final prompt.
+Full-timeline inventory (CRITICAL):
+- You receive a dense KEYFRAME INVENTORY spanning the whole video.
+- Turn it into continuous timestamped beats — do not jump over sections.
+- Every FRAME line whose exposure is NOT "none" MUST appear as an explicit beat.
 - Do not euphemize ("adjusts dress"). If inventory says bare buttock / dress pulled up / slit open — write that.
 - Wardrobe always follows the inventory/source frames, never My Model clothes.
 
 Output (one paste-ready prompt only — no markdown fences, no commentary):
-1) Overall setup (set, wardrobe, camera, aspect)
-2) Timestamped beats (mm:ss) for the full clip — include every exposure beat from the inventory
-3) Verbatim dialogue
+1) Overall setup (set, wardrobe, camera, aspect, duration)
+2) Dense timestamped beats (mm:ss) covering start → every action change → end
+3) Verbatim dialogue tied to timing when possible
 4) Natural voice / ambience
 5) Short negatives in plain words (not --no flags)`;
 }
@@ -80,28 +90,24 @@ export function buildWanRecreateUserMessage(options: {
     typeof options.durationSec === "number" && options.durationSec > 0
       ? `${options.durationSec.toFixed(1)}s`
       : "unknown duration";
-  const times =
-    options.keyframeTimesSec && options.keyframeTimesSec.length
-      ? options.keyframeTimesSec
-          .map((t, i) => `  frame ${i + 1} ≈ ${formatMmSs(t)}`)
-          .join("\n")
-      : "";
+  const frameCount = options.keyframeTimesSec?.length ?? 0;
 
   return [
     `Target talent (My Model): ${name}`,
     `Clip duration hint: ${dur}`,
     options.aspect ? `Aspect hint: ${options.aspect}` : "",
     `Look-alike mode: ${options.lookAlike ? "ON" : "OFF"}`,
-    times ? `Keyframe timestamps:\n${times}` : "",
+    frameCount
+      ? `Dense timeline: ${frameCount} inventoried frames spanning the full clip.`
+      : "",
     "",
-    "KEYFRAME INVENTORY (source of truth for wardrobe + exposure — do not drop exposure lines):",
+    "KEYFRAME INVENTORY (full-clip source of truth — recreate EVERY beat, do not skip exposure lines):",
     options.inventory.trim() || "(empty)",
     "",
     "ASR TRANSCRIPT (verbatim — lock into the prompt):",
     options.transcript.trim() || "(no speech detected)",
     "",
-    "Write the paste-ready Wan recreate NARRATIVE prompt now.",
-    "Must include every non-none exposure beat from the inventory with a timestamp.",
+    "Write the paste-ready Wan recreate NARRATIVE prompt now — exact choreography of the full video.",
   ]
     .filter(Boolean)
     .join("\n");
@@ -122,7 +128,7 @@ export function inventoryHasExposure(inventory: string): boolean {
   const lines = inventory.split("\n").filter((l) => /^FRAME\s+\d+/i.test(l));
   if (!lines.length) return EXPOSURE_RE.test(inventory);
   return lines.some((line) => {
-    const exp = /exposure:\s*(.+?)(?:\s*\|\s*motion:|$)/i.exec(line);
+    const exp = /exposure:\s*(.+?)(?:\s*\|\s*(?:pose\/)?motion:|$)/i.exec(line);
     const val = (exp?.[1] ?? "").trim();
     if (!val || /^none\b/i.test(val)) return false;
     return EXPOSURE_RE.test(val);
@@ -134,34 +140,116 @@ export function promptCoversExposure(prompt: string, inventory: string): boolean
   return EXPOSURE_RE.test(prompt);
 }
 
-async function inventoryKeyframes(options: {
-  apiKey: string;
-  llm: PromptLlmId;
-  keyframeUrls: string[];
-  keyframeTimesSec?: number[];
-}): Promise<string> {
-  const timeHint =
-    options.keyframeTimesSec && options.keyframeTimesSec.length
-      ? options.keyframeTimesSec
-          .map((t, i) => `Image ${i + 1} is ≈ ${formatMmSs(t)}`)
-          .join("; ")
-      : `${options.keyframeUrls.length} images in timeline order`;
-
-  const text = await runPromptLlm({
-    llm: options.llm,
-    apiKey: options.apiKey,
-    system: buildInventorySystemPrompt(),
-    userText: `Inventory these keyframes. ${timeHint}. One FRAME line per image. Be explicit about clothing lifts / bare skin.`,
-    imageUrls: options.keyframeUrls,
-  });
-
-  // Keep FRAME lines if present; otherwise keep whole text
+function renumberFrameLines(
+  text: string,
+  startIndex: number,
+  times: number[]
+): string[] {
   const lines = text
     .split("\n")
     .map((l) => l.trim())
     .filter(Boolean);
   const frameLines = lines.filter((l) => /^FRAME\s+\d+/i.test(l));
-  return (frameLines.length ? frameLines : lines).join("\n");
+  const source = frameLines.length ? frameLines : lines;
+  return source.map((line, i) => {
+    const globalIndex = startIndex + i + 1;
+    const t = times[i];
+    const stamp =
+      typeof t === "number" ? formatMmSs(t) : `frame-${globalIndex}`;
+    const rest = line.replace(/^FRAME\s+\d+\s*(?:@\s*[^\|]+)?\|?\s*/i, "");
+    return `FRAME ${globalIndex} @ ${stamp} | ${rest}`;
+  });
+}
+
+async function inventoryKeyframesBatched(options: {
+  apiKey: string;
+  llm: PromptLlmId;
+  keyframeUrls: string[];
+  keyframeTimesSec?: number[];
+}): Promise<string> {
+  const urls = options.keyframeUrls;
+  const times = options.keyframeTimesSec ?? urls.map((_, i) => i);
+  const allLines: string[] = [];
+
+  for (let start = 0; start < urls.length; start += INVENTORY_BATCH) {
+    const batchUrls = urls.slice(start, start + INVENTORY_BATCH);
+    const batchTimes = times.slice(start, start + INVENTORY_BATCH);
+    const mapping = batchTimes
+      .map(
+        (t, i) =>
+          `Attached image ${i + 1} = FRAME ${start + i + 1} @ ${formatMmSs(t)}`
+      )
+      .join("\n");
+
+    const text = await runPromptLlm({
+      llm: options.llm,
+      apiKey: options.apiKey,
+      system: buildInventorySystemPrompt(),
+      userText: `Inventory this batch of a dense full-clip timeline.
+
+${mapping}
+
+Output one FRAME line per image using the GLOBAL frame numbers and timestamps above. Be explicit about clothing lifts / bare skin / pose changes.`,
+      imageUrls: batchUrls,
+    });
+
+    allLines.push(...renumberFrameLines(text, start, batchTimes));
+  }
+
+  return allLines.join("\n");
+}
+
+function pickVisionUrls(
+  urls: string[],
+  times: number[],
+  inventory: string
+): string[] {
+  if (urls.length <= 10) return urls;
+
+  const scores = urls.map((_, i) => {
+    let score = Math.abs(i - urls.length / 2) < urls.length / 4 ? 10 : 0;
+    // Prefer evenly spaced coverage as a base
+    score += 1;
+    void times;
+    return score;
+  });
+
+  const boosted = new Set<number>();
+  for (const line of inventory.split("\n")) {
+    if (!EXPOSURE_RE.test(line) || /exposure:\s*none/i.test(line)) continue;
+    const m = /^FRAME\s+(\d+)/i.exec(line);
+    if (m) {
+      const idx = Number(m[1]) - 1;
+      if (idx >= 0 && idx < scores.length) {
+        boosted.add(idx);
+        scores[idx] += 1_000_000;
+      }
+    }
+  }
+
+  const chosen = new Set<number>([0, urls.length - 1]);
+  const ranked = scores
+    .map((score, i) => ({ i, score }))
+    .filter((r) => r.i !== 0 && r.i !== urls.length - 1)
+    .sort((a, b) => b.score - a.score);
+  for (const r of ranked) {
+    if (chosen.size >= 10) break;
+    chosen.add(r.i);
+  }
+  for (const i of boosted) {
+    if (chosen.size >= 10) break;
+    chosen.add(i);
+  }
+  // Fill remaining with even grid
+  const step = urls.length / 10;
+  for (let k = 0; k < 10 && chosen.size < 10; k++) {
+    chosen.add(Math.min(urls.length - 1, Math.round(k * step)));
+  }
+
+  return [...chosen]
+    .sort((a, b) => a - b)
+    .slice(0, 10)
+    .map((i) => urls[i]);
 }
 
 export async function buildPromptFromVideo(options: {
@@ -182,6 +270,7 @@ export async function buildPromptFromVideo(options: {
   llm: PromptLlmId;
   recipeId: string;
   note: string;
+  frameCount: number;
 }> {
   let transcript = "";
   try {
@@ -197,13 +286,18 @@ export async function buildPromptFromVideo(options: {
     }. Infer spoken lines carefully from keyframes/context; mark uncertain dialogue.)`;
   }
 
-  // Pass 1: force the model to name wardrobe/exposure per frame before writing Wan prose.
-  const inventory = await inventoryKeyframes({
+  const inventory = await inventoryKeyframesBatched({
     apiKey: options.apiKey,
     llm: options.llm,
     keyframeUrls: options.keyframeUrls,
     keyframeTimesSec: options.keyframeTimesSec,
   });
+
+  const visionUrls = pickVisionUrls(
+    options.keyframeUrls,
+    options.keyframeTimesSec ?? [],
+    inventory
+  );
 
   const system = buildWanRecreateSystemPrompt({
     modelName: options.modelName,
@@ -225,7 +319,7 @@ export async function buildPromptFromVideo(options: {
     apiKey: options.apiKey,
     system,
     userText,
-    imageUrls: options.keyframeUrls,
+    imageUrls: visionUrls,
   });
 
   if (looksLikeBadImagePrompt(prompt)) {
@@ -235,8 +329,8 @@ export async function buildPromptFromVideo(options: {
       system,
       userText: `${userText}
 
-PREVIOUS ATTEMPT WAS INVALID (Midjourney/image flags). Rewrite as a full narrative Wan video prompt. No --ar/--v/--stylize.`,
-      imageUrls: options.keyframeUrls,
+PREVIOUS ATTEMPT WAS INVALID (Midjourney/image flags). Rewrite as a full narrative Wan video prompt covering the entire inventory timeline. No --ar/--v/--stylize.`,
+      imageUrls: visionUrls,
     });
     if (looksLikeBadImagePrompt(prompt)) {
       throw new Error(
@@ -245,7 +339,6 @@ PREVIOUS ATTEMPT WAS INVALID (Midjourney/image flags). Rewrite as a full narrati
     }
   }
 
-  // Pass 3: if inventory saw exposure but final prompt soft-censored it, force rewrite.
   if (!promptCoversExposure(prompt, inventory)) {
     prompt = await runPromptLlm({
       llm: options.llm,
@@ -253,14 +346,14 @@ PREVIOUS ATTEMPT WAS INVALID (Midjourney/image flags). Rewrite as a full narrati
       system,
       userText: `${userText}
 
-CRITICAL REWRITE: Your previous prompt omitted the attention-grab exposure beat that the inventory already recorded:
+CRITICAL REWRITE: Your previous prompt omitted attention-grab exposure beat(s) already in the inventory:
 ${inventory
   .split("\n")
   .filter((l) => EXPOSURE_RE.test(l) && !/exposure:\s*none/i.test(l))
   .join("\n")}
 
-Rewrite the FULL Wan prompt and INCLUDE those beats with timestamps. Do not euphemize.`,
-      imageUrls: options.keyframeUrls,
+Rewrite the FULL Wan prompt covering the entire clip and INCLUDE those beats with timestamps. Do not euphemize.`,
+      imageUrls: visionUrls,
     });
   }
 
@@ -270,8 +363,9 @@ Rewrite the FULL Wan prompt and INCLUDE those beats with timestamps. Do not euph
     inventory,
     llm: options.llm,
     recipeId: VIDEO_RECREATE_RECIPE_ID,
+    frameCount: options.keyframeUrls.length,
     note: options.lookAlike
       ? "Look-alike on — review face/hair wording before generate."
-      : "Identity stripped from source; attach My Model refs when you generate in Video studio.",
+      : `Full-clip inventory (${options.keyframeUrls.length} frames). Identity stripped; attach My Model refs in Video studio.`,
   };
 }

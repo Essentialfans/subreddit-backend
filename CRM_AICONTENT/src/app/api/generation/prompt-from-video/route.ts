@@ -49,13 +49,21 @@ export async function POST(request: Request) {
       );
     }
 
-    const keyframeUrls = [...new Set((body.keyframeUrls ?? []).filter(Boolean))];
+    // Keep order — dense timeline must stay chronological (do not Set-dedupe).
+    const keyframeUrls = (body.keyframeUrls ?? []).filter(Boolean);
     if (keyframeUrls.length < 1) {
       return NextResponse.json(
         {
           ok: false,
-          error: "Upload the clip and wait for keyframes to extract (need ≥1).",
+          error:
+            "Upload the clip and wait for the full-timeline frames to finish extracting.",
         },
+        { status: 400 }
+      );
+    }
+    if (keyframeUrls.length > 60) {
+      return NextResponse.json(
+        { ok: false, error: "Too many keyframes (max 60)." },
         { status: 400 }
       );
     }

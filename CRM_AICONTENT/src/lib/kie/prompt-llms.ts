@@ -139,7 +139,7 @@ async function grokComplete(options: {
       type: "input_text",
       text: `${options.system}\n\n---\n\n${options.userText}`,
     },
-    ...options.imageUrls.slice(0, 8).map((image_url) => ({
+    ...options.imageUrls.slice(0, 10).map((image_url) => ({
       type: "input_image",
       image_url,
     })),
@@ -177,7 +177,7 @@ async function geminiHydrogenComplete(options: {
   const model = "gemini-4-hydrogen-openai";
   const userContent: Array<Record<string, unknown>> = [
     { type: "text", text: options.userText },
-    ...options.imageUrls.slice(0, 8).map((url) => ({
+    ...options.imageUrls.slice(0, 10).map((url) => ({
       type: "image_url",
       image_url: { url },
     })),
@@ -228,7 +228,7 @@ async function claudeOpusComplete(options: {
   imageUrls: string[];
 }): Promise<string> {
   const content: Array<Record<string, unknown>> = [
-    ...options.imageUrls.slice(0, 8).map((url) => ({
+    ...options.imageUrls.slice(0, 10).map((url) => ({
       type: "image",
       source: { type: "url", url },
     })),
