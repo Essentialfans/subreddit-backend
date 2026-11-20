@@ -12,6 +12,7 @@ export async function POST(request: Request) {
     const body = (await request.json()) as {
       sourceVideoUrl?: string;
       keyframeUrls?: string[];
+      keyframeTimesSec?: number[];
       creatorId?: string;
       modelName?: string;
       llm?: string;
@@ -64,6 +65,10 @@ export async function POST(request: Request) {
 
     const apiKey = await loadKieApiKey(userId);
 
+    const keyframeTimesSec = (body.keyframeTimesSec ?? [])
+      .map((t) => Number(t))
+      .filter((t) => Number.isFinite(t) && t >= 0);
+
     const result = await buildPromptFromVideo({
       apiKey,
       llm: llmOpt.id as PromptLlmId,
@@ -72,6 +77,7 @@ export async function POST(request: Request) {
       videoModelLabel: videoModel?.label ?? "Wan 3.0",
       lookAlike: Boolean(body.lookAlike),
       keyframeUrls,
+      keyframeTimesSec,
       durationSec: body.durationSec ?? null,
       aspect: body.aspect ?? "9:16",
     });

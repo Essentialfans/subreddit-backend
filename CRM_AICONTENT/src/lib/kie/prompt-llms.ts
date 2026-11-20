@@ -22,12 +22,12 @@ export const PROMPT_LLM_OPTIONS: PromptLlmOption[] = [
   {
     id: "gemini-4-hydrogen",
     label: "Gemini 4 Hydrogen",
-    blurb: "Strong general video understanding",
+    blurb: "Strong general video understanding (may soft-censor adult beats)",
   },
   {
     id: "claude-opus-5-5",
     label: "Claude Opus 5.5",
-    blurb: "Strong adult detail fallback",
+    blurb: "Detail fallback — often refuses explicit wardrobe / nudity",
   },
 ];
 
@@ -43,22 +43,88 @@ function stripFences(text: string): string {
     .trim();
 }
 
-async function parseJsonResponse(response: Response): Promise<Record<string, unknown>> {
+function friendlyLlmError(raw: string, llm: PromptLlmId): string {
+  const msg = raw.trim() || "LLM request failed";
+  if (/internal error/i.test(msg) || /please try again later/i.test(msg)) {
+    if (llm === "claude-opus-5-5") {
+      return "Claude refused or failed on this clip (common on explicit wardrobe). Use Grok 4.7 for adult recreates.";
+    }
+    return `${msg} — try Grok 4.7, or regenerate in a moment.`;
+  }
+  if (/content.?policy|safety|refus|nsfw|moderation/i.test(msg)) {
+    return "This LLM blocked the clip. Switch to Grok 4.7 for adult / explicit motion.";
+  }
+  return msg;
+}
+
+async function parseJsonResponse(
+  response: Response,
+  llm: PromptLlmId
+): Promise<Record<string, unknown>> {
   const json = (await response.json().catch(() => null)) as Record<
     string,
     unknown
   > | null;
-  if (!json) throw new Error(`Empty LLM response (HTTP ${response.status})`);
+  if (!json) {
+    throw new Error(
+      friendlyLlmError(`Empty LLM response (HTTP ${response.status})`, llm)
+    );
+  }
   if (!response.ok) {
     const err = json.error as { message?: string } | undefined;
     throw new Error(
-      String(json.msg || json.message || err?.message || `LLM HTTP ${response.status}`)
+      friendlyLlmError(
+        String(json.msg || json.message || err?.message || `LLM HTTP ${response.status}`),
+        llm
+      )
     );
   }
   if (typeof json.code === "number" && json.code !== 200) {
-    throw new Error(String(json.msg || json.message || `LLM error ${json.code}`));
+    throw new Error(
+      friendlyLlmError(
+        String(json.msg || json.message || `LLM error ${json.code}`),
+        llm
+      )
+    );
+  }
+  const nestedErr = json.error as { message?: string; type?: string } | undefined;
+  if (nestedErr?.message && !json.output && !json.content && !json.choices) {
+    throw new Error(friendlyLlmError(nestedErr.message, llm));
   }
   return json;
+}
+
+function extractGrokText(json: Record<string, unknown>): string {
+  const chunks: string[] = [];
+  const output = json.output;
+  if (Array.isArray(output)) {
+    for (const item of output) {
+      if (!item || typeof item !== "object") continue;
+      const row = item as Record<string, unknown>;
+      // Skip reasoning blocks — only take assistant messages
+      if (row.type === "reasoning") continue;
+      if (row.type === "message" && Array.isArray(row.content)) {
+        for (const part of row.content) {
+          if (!part || typeof part !== "object") continue;
+          const p = part as { type?: string; text?: string };
+          if (typeof p.text === "string" && p.text.trim()) {
+            chunks.push(p.text);
+          }
+        }
+      }
+      if (typeof row.text === "string" && row.type !== "reasoning") {
+        chunks.push(row.text);
+      }
+    }
+  }
+  const choices = json.choices as
+    | Array<{ message?: { content?: string } }>
+    | undefined;
+  if (choices?.[0]?.message?.content) {
+    chunks.push(choices[0].message.content);
+  }
+  if (typeof json.output_text === "string") chunks.push(json.output_text);
+  return stripFences(chunks.join("\n"));
 }
 
 /** Grok 4.7 Responses API — text + input_image parts. */
@@ -69,7 +135,10 @@ async function grokComplete(options: {
   imageUrls: string[];
 }): Promise<string> {
   const content: Array<Record<string, string>> = [
-    { type: "input_text", text: `${options.system}\n\n${options.userText}` },
+    {
+      type: "input_text",
+      text: `${options.system}\n\n---\n\n${options.userText}`,
+    },
     ...options.imageUrls.slice(0, 8).map((image_url) => ({
       type: "input_image",
       image_url,
@@ -85,43 +154,15 @@ async function grokComplete(options: {
     body: JSON.stringify({
       model: "grok-4-7",
       stream: false,
-      reasoning: { effort: "low" },
+      // medium: better scene fidelity; low often dumps junk flags
+      reasoning: { effort: "medium" },
       input: [{ role: "user", content }],
     }),
     cache: "no-store",
   });
 
-  const json = await parseJsonResponse(response);
-  // Responses API shapes vary — collect text from output[] or choices
-  const chunks: string[] = [];
-  const output = json.output;
-  if (Array.isArray(output)) {
-    for (const item of output) {
-      if (!item || typeof item !== "object") continue;
-      const row = item as Record<string, unknown>;
-      if (row.type === "message" && Array.isArray(row.content)) {
-        for (const part of row.content) {
-          if (
-            part &&
-            typeof part === "object" &&
-            typeof (part as { text?: string }).text === "string"
-          ) {
-            chunks.push((part as { text: string }).text);
-          }
-        }
-      }
-      if (typeof row.text === "string") chunks.push(row.text);
-    }
-  }
-  const choices = json.choices as
-    | Array<{ message?: { content?: string } }>
-    | undefined;
-  if (choices?.[0]?.message?.content) {
-    chunks.push(choices[0].message.content);
-  }
-  if (typeof json.output_text === "string") chunks.push(json.output_text);
-
-  const text = stripFences(chunks.join("\n"));
+  const json = await parseJsonResponse(response, "grok-4-7");
+  const text = extractGrokText(json);
   if (!text) throw new Error("Grok returned an empty prompt");
   return text;
 }
@@ -142,28 +183,25 @@ async function geminiHydrogenComplete(options: {
     })),
   ];
 
-  const response = await fetch(
-    `${KIE_BASE}/${model}/v1/chat/completions`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${options.apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model,
-        temperature: 0.35,
-        stream: false,
-        messages: [
-          { role: "system", content: options.system },
-          { role: "user", content: userContent },
-        ],
-      }),
-      cache: "no-store",
-    }
-  );
+  const response = await fetch(`${KIE_BASE}/${model}/v1/chat/completions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${options.apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0.35,
+      stream: false,
+      messages: [
+        { role: "system", content: options.system },
+        { role: "user", content: userContent },
+      ],
+    }),
+    cache: "no-store",
+  });
 
-  const json = await parseJsonResponse(response);
+  const json = await parseJsonResponse(response, "gemini-4-hydrogen");
   const choices = json.choices as
     | Array<{ message?: { content?: string | Array<{ text?: string }> } }>
     | undefined;
@@ -178,7 +216,11 @@ async function geminiHydrogenComplete(options: {
   return text;
 }
 
-/** Claude Opus 5.5 via kie Anthropic-compatible messages. */
+/**
+ * Claude Opus 5.5 via kie Anthropic-compatible messages.
+ * kie schema does not reliably accept top-level `system`, so instructions
+ * are folded into the first user text block.
+ */
 async function claudeOpusComplete(options: {
   apiKey: string;
   system: string;
@@ -190,7 +232,10 @@ async function claudeOpusComplete(options: {
       type: "image",
       source: { type: "url", url },
     })),
-    { type: "text", text: options.userText },
+    {
+      type: "text",
+      text: `${options.system}\n\n---\n\n${options.userText}`,
+    },
   ];
 
   const response = await fetch(`${KIE_BASE}/claude/v1/messages`, {
@@ -198,18 +243,18 @@ async function claudeOpusComplete(options: {
     headers: {
       Authorization: `Bearer ${options.apiKey}`,
       "Content-Type": "application/json",
+      "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify({
       model: "claude-opus-5-5",
       max_tokens: 4096,
       stream: false,
-      system: options.system,
       messages: [{ role: "user", content }],
     }),
     cache: "no-store",
   });
 
-  const json = await parseJsonResponse(response);
+  const json = await parseJsonResponse(response, "claude-opus-5-5");
   const parts = json.content as Array<{ type?: string; text?: string }> | undefined;
   const text = stripFences(
     (parts ?? [])
@@ -217,7 +262,14 @@ async function claudeOpusComplete(options: {
       .map((p) => p.text!)
       .join("\n")
   );
-  if (!text) throw new Error("Claude returned an empty prompt");
+  if (!text) {
+    throw new Error(
+      friendlyLlmError(
+        "Claude returned empty text (often a content refusal on explicit clips). Use Grok 4.7.",
+        "claude-opus-5-5"
+      )
+    );
+  }
   return text;
 }
 
@@ -228,14 +280,19 @@ export async function runPromptLlm(options: {
   userText: string;
   imageUrls: string[];
 }): Promise<string> {
-  switch (options.llm) {
-    case "grok-4-7":
-      return grokComplete(options);
-    case "gemini-4-hydrogen":
-      return geminiHydrogenComplete(options);
-    case "claude-opus-5-5":
-      return claudeOpusComplete(options);
-    default:
-      throw new Error(`Unknown prompt LLM: ${options.llm}`);
+  try {
+    switch (options.llm) {
+      case "grok-4-7":
+        return await grokComplete(options);
+      case "gemini-4-hydrogen":
+        return await geminiHydrogenComplete(options);
+      case "claude-opus-5-5":
+        return await claudeOpusComplete(options);
+      default:
+        throw new Error(`Unknown prompt LLM: ${options.llm}`);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(friendlyLlmError(msg, options.llm));
   }
 }

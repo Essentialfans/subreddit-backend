@@ -44,6 +44,7 @@ export function PromptFromVideoPanel({
   const [videoUrl, setVideoUrl] = useState("");
   const [previewUrl, setPreviewUrl] = useState("");
   const [keyframeUrls, setKeyframeUrls] = useState<string[]>([]);
+  const [keyframeTimesSec, setKeyframeTimesSec] = useState<number[]>([]);
   const [durationSec, setDurationSec] = useState<number | null>(null);
   const [uploadPct, setUploadPct] = useState<number | null>(null);
   const [preparing, setPreparing] = useState(false);
@@ -98,6 +99,7 @@ export function PromptFromVideoPanel({
     setTranscript("");
     setNote("");
     setKeyframeUrls([]);
+    setKeyframeTimesSec([]);
     setLocalFile(file);
     if (previewUrl.startsWith("blob:")) URL.revokeObjectURL(previewUrl);
     setPreviewUrl(URL.createObjectURL(file));
@@ -105,11 +107,12 @@ export function PromptFromVideoPanel({
     setUploadPct(0);
     try {
       const [{ frames, durationSec: dur }, uploadedVideo] = await Promise.all([
-        extractKeyframesFromVideoFile(file, 5),
+        extractKeyframesFromVideoFile(file, 7),
         uploadGenerationFile(file, setUploadPct),
       ]);
       setDurationSec(dur);
       setVideoUrl(uploadedVideo);
+      setKeyframeTimesSec(frames.map((f) => f.timeSec));
 
       const uploadedFrames: string[] = [];
       for (let i = 0; i < frames.length; i++) {
@@ -123,6 +126,7 @@ export function PromptFromVideoPanel({
       setError(err instanceof Error ? err.message : "Could not prepare clip");
       setVideoUrl("");
       setKeyframeUrls([]);
+      setKeyframeTimesSec([]);
     } finally {
       setUploadPct(null);
       setPreparing(false);
@@ -152,6 +156,7 @@ export function PromptFromVideoPanel({
         body: JSON.stringify({
           sourceVideoUrl: videoUrl,
           keyframeUrls,
+          keyframeTimesSec,
           creatorId: creator.id,
           modelName: creator.name,
           llm,

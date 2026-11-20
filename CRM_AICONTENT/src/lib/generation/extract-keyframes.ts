@@ -57,11 +57,34 @@ async function captureFrame(
 }
 
 /**
- * Grab start / mid / end (and a couple action beats) as JPEG blobs.
+ * Sample start / mid-action / end with extra density around 35–55% of the
+ * clip (where wardrobe reveals often land on ~15s reels).
+ */
+export function pickKeyframeTimes(durationSec: number, count = 7): number[] {
+  const n = Math.min(8, Math.max(5, count));
+  const end = Math.max(0, durationSec - 0.08);
+  const fractions =
+    n >= 7
+      ? [0.01, 0.2, 0.38, 0.45, 0.52, 0.72, 0.99]
+      : [0.01, 0.25, 0.42, 0.55, 0.99];
+  const picked = fractions.slice(0, n).map((f) =>
+    Math.min(end, Math.max(0.05, durationSec * f))
+  );
+  // De-dupe near-identical seeks
+  const out: number[] = [];
+  for (const t of picked) {
+    if (!out.length || Math.abs(out[out.length - 1] - t) > 0.12) out.push(t);
+  }
+  if (out[out.length - 1] < end - 0.05) out.push(end);
+  return out.slice(0, 8);
+}
+
+/**
+ * Grab start / mid / end (and mid-action beats) as JPEG blobs.
  */
 export async function extractKeyframesFromVideoFile(
   file: File,
-  count = 5
+  count = 7
 ): Promise<{ frames: KeyframeCapture[]; durationSec: number }> {
   const objectUrl = URL.createObjectURL(file);
   try {
@@ -70,17 +93,7 @@ export async function extractKeyframesFromVideoFile(
     if (!durationSec || durationSec < 0.2) {
       throw new Error("Video has no readable duration");
     }
-    const n = Math.min(8, Math.max(3, count));
-    const times: number[] = [];
-    for (let i = 0; i < n; i++) {
-      const t =
-        i === 0
-          ? 0.05
-          : i === n - 1
-            ? Math.max(0, durationSec - 0.08)
-            : (durationSec * i) / (n - 1);
-      times.push(t);
-    }
+    const times = pickKeyframeTimes(durationSec, count);
     const frames: KeyframeCapture[] = [];
     for (let i = 0; i < times.length; i++) {
       frames.push(await captureFrame(video, times[i], i));
