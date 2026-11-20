@@ -172,6 +172,10 @@ Structure: identity lock → scene/action → lighting → style → quality. Ke
         ),
 };
 
+/** Used by /video/prompt-from-clip (see prompt-from-video.ts for full system). */
+export const WAN_RECREATE_IDENTITY_NOTE =
+  "Wan recreate-from-clip: choreography + wardrobe + dialogue from source; identity from My Model @Image refs — never copy source face/hair/body when look-alike is off.";
+
 const VIDEO_RECIPES: Record<string, PromptRecipe> = {
   "wan-3-0": {
     id: "wan-3-0",

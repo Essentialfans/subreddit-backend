@@ -111,9 +111,13 @@ async function downloadAsset(url: string, filename: string) {
 export function VideoDock({
   initialModelId,
   initialImageUrl,
+  initialPrompt,
+  initialVideoModelId,
 }: {
   initialModelId?: string | null;
   initialImageUrl?: string | null;
+  initialPrompt?: string | null;
+  initialVideoModelId?: string | null;
 }) {
   const [creatorModels, setCreatorModels] = useState<CreatorModel[]>([]);
   const [creatorId, setCreatorId] = useState<string | null>(
@@ -127,17 +131,25 @@ export function VideoDock({
     [category]
   );
 
-  const [videoModelId, setVideoModelId] = useState(
-    () =>
-      videoModelsByCategory("prompting").find((m) => m.id === "kling-4-0")
-        ?.id ??
-      videoModelsByCategory("prompting")[0]?.id ??
+  const [videoModelId, setVideoModelId] = useState(() => {
+    const prompting = videoModelsByCategory("prompting");
+    if (
+      initialVideoModelId &&
+      prompting.some((m) => m.id === initialVideoModelId)
+    ) {
+      return initialVideoModelId;
+    }
+    return (
+      prompting.find((m) => m.id === "wan-3-0")?.id ??
+      prompting.find((m) => m.id === "kling-4-0")?.id ??
+      prompting[0]?.id ??
       ""
-  );
+    );
+  });
   const videoModel =
     categoryModels.find((m) => m.id === videoModelId) ?? categoryModels[0];
 
-  const [prompt, setPrompt] = useState("");
+  const [prompt, setPrompt] = useState(initialPrompt ?? "");
   const [ratio, setRatio] = useState("9:16");
   const [duration, setDuration] = useState(5);
   const [resolution, setResolution] = useState("720p");
@@ -154,13 +166,39 @@ export function VideoDock({
     null
   );
   const [audioUrl, setAudioUrl] = useState("");
-  const [enhance, setEnhance] = useState(true);
+  // Prefills from Prompt-from-video should not be rewritten by Enhance.
+  const [enhance, setEnhance] = useState(!initialPrompt);
   const [slots, setSlots] = useState<Slot[]>([{ state: "empty" }]);
   const [activeJobs, setActiveJobs] = useState(0);
   const [error, setError] = useState("");
   const [keyReady, setKeyReady] = useState<boolean | null>(null);
   const [openMenu, setOpenMenu] = useState<OpenMenu>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  // Hydrate long prompts from Prompt-from-video (sessionStorage handoff).
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = sessionStorage.getItem("ainstareel:prompt-from-video");
+      if (!raw) return;
+      sessionStorage.removeItem("ainstareel:prompt-from-video");
+      const data = JSON.parse(raw) as {
+        prompt?: string;
+        modelId?: string;
+        wan?: string;
+        aspect?: string;
+      };
+      if (data.prompt?.trim()) {
+        setPrompt(data.prompt.trim());
+        setEnhance(false);
+      }
+      if (data.modelId) setCreatorId(data.modelId);
+      if (data.wan) setVideoModelId(data.wan);
+      if (data.aspect) setRatio(data.aspect);
+    } catch {
+      // ignore corrupt payload
+    }
+  }, []);
 
   const loadModels = useCallback(async () => {
     const res = await fetch("/api/models", { cache: "no-store" });
