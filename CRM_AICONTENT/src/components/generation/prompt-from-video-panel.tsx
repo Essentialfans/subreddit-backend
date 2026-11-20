@@ -111,8 +111,8 @@ export function PromptFromVideoPanel({
     setPrepareStatus("Capturing full-timeline frames…");
     try {
       const extractPromise = extractKeyframesFromVideoFile(file, {
-        intervalSec: 0.33,
-        maxFrames: 48,
+        intervalSec: 0.4,
+        maxFrames: 36,
         onProgress: (done, total) => {
           setPrepareStatus(`Capturing frames ${done}/${total}…`);
         },

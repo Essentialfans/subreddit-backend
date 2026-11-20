@@ -9,11 +9,15 @@ export interface KeyframeCapture {
 }
 
 export interface ExtractKeyframesOptions {
-  /** Target seconds between frames (default 0.33 ≈ 3fps grid). */
+  /** Target seconds between frames (default 0.4). */
   intervalSec?: number;
-  /** Hard cap so uploads/LLM stay practical (default 48). */
+  /** Hard cap so uploads/LLM stay practical (default 36). */
   maxFrames?: number;
   onProgress?: (done: number, total: number) => void;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function loadVideo(src: string): Promise<HTMLVideoElement> {
@@ -21,73 +25,151 @@ function loadVideo(src: string): Promise<HTMLVideoElement> {
     const video = document.createElement("video");
     video.preload = "auto";
     video.muted = true;
+    video.defaultMuted = true;
     video.playsInline = true;
-    video.crossOrigin = "anonymous";
-    const onReady = () => {
-      video.removeEventListener("loadeddata", onReady);
+    video.setAttribute("playsinline", "");
+    video.setAttribute("webkit-playsinline", "");
+    // Keep off-screen but in the document — improves decode/seek reliability.
+    video.style.cssText =
+      "position:fixed;left:-99999px;top:0;width:2px;height:2px;opacity:0;pointer-events:none;";
+    document.body.appendChild(video);
+
+    const fail = (msg: string) => {
+      cleanupVideo(video);
+      reject(new Error(msg));
+    };
+
+    const ready = () => {
+      if (!Number.isFinite(video.duration) || video.duration < 0.2) {
+        fail("Video has no readable duration");
+        return;
+      }
+      if (!video.videoWidth || !video.videoHeight) {
+        fail("Video has no readable dimensions");
+        return;
+      }
       resolve(video);
     };
-    video.addEventListener("loadeddata", onReady);
-    video.onerror = () => reject(new Error("Could not read the source video"));
+
+    video.addEventListener("loadeddata", ready, { once: true });
+    video.addEventListener(
+      "error",
+      () => fail("Could not read the source video"),
+      { once: true }
+    );
+    // Safety: some browsers only fire loadedmetadata
+    video.addEventListener(
+      "loadedmetadata",
+      () => {
+        if (video.readyState >= 2) ready();
+      },
+      { once: true }
+    );
+    window.setTimeout(() => {
+      if (video.readyState >= 2 && video.videoWidth) ready();
+    }, 2500);
+
     video.src = src;
+    video.load();
   });
 }
 
+function cleanupVideo(video: HTMLVideoElement) {
+  try {
+    video.pause();
+    video.removeAttribute("src");
+    video.load();
+    video.remove();
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Seek without requestVideoFrameCallback — rvfc often never fires for
+ * off-DOM / paused videos and left capture stuck at 0/N.
+ */
 function seek(video: HTMLVideoElement, time: number): Promise<void> {
   return new Promise((resolve, reject) => {
     const dur = Number.isFinite(video.duration) ? video.duration : time;
     const target = Math.min(Math.max(0, time), Math.max(0, dur - 0.04));
 
-    let settled = false;
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      video.removeEventListener("seeked", onSeeked);
-      const rvfc = (
-        video as HTMLVideoElement & {
-          requestVideoFrameCallback?: (cb: () => void) => number;
-        }
-      ).requestVideoFrameCallback;
-      if (typeof rvfc === "function") {
-        rvfc.call(video, () => resolve());
-      } else {
-        requestAnimationFrame(() => resolve());
-      }
-    };
-
-    const onSeeked = () => finish();
-    video.addEventListener("seeked", onSeeked);
-    video.onerror = () => reject(new Error("Seek failed"));
-
-    // Timeout fallback if seeked never fires
-    const timer = window.setTimeout(() => finish(), 1200);
-
-    if (Math.abs(video.currentTime - target) < 0.001) {
-      window.clearTimeout(timer);
-      finish();
+    if (Math.abs(video.currentTime - target) < 0.04) {
+      resolve();
       return;
     }
-    video.currentTime = target;
-    const clear = () => window.clearTimeout(timer);
-    video.addEventListener("seeked", clear, { once: true });
+
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      video.removeEventListener("seeked", onSeeked);
+      video.removeEventListener("error", onError);
+      resolve();
+    };
+    const onSeeked = () => done();
+    const onError = () => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      video.removeEventListener("seeked", onSeeked);
+      reject(new Error("Seek failed"));
+    };
+
+    // Hard cap — never hang a frame capture.
+    const timer = window.setTimeout(done, 700);
+    video.addEventListener("seeked", onSeeked);
+    video.addEventListener("error", onError);
+    try {
+      video.currentTime = target;
+    } catch {
+      done();
+    }
   });
 }
 
-async function drawFrame(
+function drawFrame(
   video: HTMLVideoElement,
   maxEdge: number
-): Promise<{ canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D }> {
-  const scale =
-    Math.max(video.videoWidth, video.videoHeight) > maxEdge
-      ? maxEdge / Math.max(video.videoWidth, video.videoHeight)
-      : 1;
+): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } {
+  const vw = video.videoWidth || 720;
+  const vh = video.videoHeight || 1280;
+  const scale = Math.max(vw, vh) > maxEdge ? maxEdge / Math.max(vw, vh) : 1;
   const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
-  canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+  canvas.width = Math.max(1, Math.round(vw * scale));
+  canvas.height = Math.max(1, Math.round(vh * scale));
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   if (!ctx) throw new Error("Could not capture keyframe");
   ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
   return { canvas, ctx };
+}
+
+function canvasToJpeg(canvas: HTMLCanvasElement, quality = 0.8): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    // toBlob can theoretically stall; hard-timeout + toDataURL fallback.
+    const timer = window.setTimeout(() => {
+      try {
+        const dataUrl = canvas.toDataURL("image/jpeg", quality);
+        const bin = atob(dataUrl.split(",")[1] ?? "");
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        resolve(new Blob([bytes], { type: "image/jpeg" }));
+      } catch (err) {
+        reject(err instanceof Error ? err : new Error("Keyframe encode failed"));
+      }
+    }, 2000);
+
+    canvas.toBlob(
+      (blob) => {
+        window.clearTimeout(timer);
+        if (blob) resolve(blob);
+        else reject(new Error("Keyframe encode failed"));
+      },
+      "image/jpeg",
+      quality
+    );
+  });
 }
 
 function l1Delta(a: Uint8ClampedArray, b: Uint8ClampedArray): number {
@@ -108,8 +190,8 @@ function l1Delta(a: Uint8ClampedArray, b: Uint8ClampedArray): number {
  */
 export function buildFullTimelineTimes(
   durationSec: number,
-  intervalSec = 0.33,
-  maxFrames = 48
+  intervalSec = 0.4,
+  maxFrames = 36
 ): number[] {
   const end = Math.max(0.05, durationSec - 0.04);
   const idealCount = Math.floor(end / intervalSec) + 1;
@@ -125,7 +207,6 @@ export function buildFullTimelineTimes(
     if (times.length >= maxFrames) times[times.length - 1] = end;
     else times.push(end);
   }
-  // De-dupe near-identical
   const out: number[] = [];
   for (const t of times) {
     if (!out.length || Math.abs(out[out.length - 1] - t) > 0.08) out.push(t);
@@ -142,17 +223,14 @@ export async function extractKeyframesFromVideoFile(
 ): Promise<{ frames: KeyframeCapture[]; durationSec: number }> {
   const opts: ExtractKeyframesOptions =
     typeof options === "number" ? { maxFrames: options } : options;
-  const intervalSec = opts.intervalSec ?? 0.33;
-  const maxFrames = opts.maxFrames ?? 48;
+  const intervalSec = opts.intervalSec ?? 0.4;
+  const maxFrames = opts.maxFrames ?? 36;
 
   const objectUrl = URL.createObjectURL(file);
+  let video: HTMLVideoElement | null = null;
   try {
-    const video = await loadVideo(objectUrl);
-    const durationSec = Number.isFinite(video.duration) ? video.duration : 0;
-    if (!durationSec || durationSec < 0.2) {
-      throw new Error("Video has no readable duration");
-    }
-
+    video = await loadVideo(objectUrl);
+    const durationSec = video.duration;
     const times = buildFullTimelineTimes(durationSec, intervalSec, maxFrames);
     opts.onProgress?.(0, times.length);
 
@@ -161,8 +239,10 @@ export async function extractKeyframesFromVideoFile(
 
     for (let i = 0; i < times.length; i++) {
       await seek(video, times[i]);
-      const { canvas, ctx } = await drawFrame(video, 960);
-      // Downsample in-place region for motion scoring
+      // Brief settle so the decoded frame is available without rvfc.
+      await sleep(20);
+
+      const { canvas } = drawFrame(video, 720);
       const tw = Math.max(1, Math.round(canvas.width / 8));
       const th = Math.max(1, Math.round(canvas.height / 8));
       const tiny = document.createElement("canvas");
@@ -174,12 +254,8 @@ export async function extractKeyframesFromVideoFile(
       const pixels = tctx.getImageData(0, 0, tw, th).data;
       const motionScore = prevPixels ? l1Delta(prevPixels, pixels) : 0;
       prevPixels = pixels;
-      void ctx;
 
-      const blob = await new Promise<Blob | null>((resolve) =>
-        canvas.toBlob((b) => resolve(b), "image/jpeg", 0.82)
-      );
-      if (!blob) throw new Error("Keyframe encode failed");
+      const blob = await canvasToJpeg(canvas, 0.78);
       frames.push({
         blob,
         timeSec: times[i],
@@ -189,37 +265,9 @@ export async function extractKeyframesFromVideoFile(
       opts.onProgress?.(i + 1, times.length);
     }
 
-    video.src = "";
-    video.load();
     return { frames, durationSec };
   } finally {
+    if (video) cleanupVideo(video);
     URL.revokeObjectURL(objectUrl);
   }
-}
-
-/** Pick a representative subset of URLs for the final Wan vision call. */
-export function pickRepresentativeIndices(
-  frames: { motionScore?: number; timeSec: number }[],
-  keep = 10
-): number[] {
-  if (frames.length <= keep) {
-    return frames.map((_, i) => i);
-  }
-  const chosen = new Set<number>([0, frames.length - 1]);
-  const ranked = frames
-    .map((f, i) => ({ i, score: f.motionScore ?? 0 }))
-    .filter((r) => r.i !== 0 && r.i !== frames.length - 1)
-    .sort((a, b) => b.score - a.score);
-  for (const r of ranked) {
-    if (chosen.size >= keep) break;
-    chosen.add(r.i);
-  }
-  // Fill evenly if motion ranking under-fills
-  if (chosen.size < keep) {
-    const step = frames.length / keep;
-    for (let k = 0; k < keep && chosen.size < keep; k++) {
-      chosen.add(Math.min(frames.length - 1, Math.round(k * step)));
-    }
-  }
-  return [...chosen].sort((a, b) => a - b);
 }
