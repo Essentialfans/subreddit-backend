@@ -291,6 +291,12 @@ export function VideoDock({
       let finalPrompt = jobPrompt;
       // Wan Animate Move has no prompt field — skip enhance/identity text.
       const acceptsPrompt = !jobModel.omitPrompt;
+      const identityUrls = [
+        ...(jobCreator?.coverUrl ? [jobCreator.coverUrl] : []),
+        ...(jobCreator?.refs.map((r) => r.publicUrl) ?? []),
+      ].filter((url, i, arr) => Boolean(url) && arr.indexOf(url) === i);
+      const hasIdentity = identityUrls.length > 0;
+
       if (acceptsPrompt && jobEnhance) {
         const enhanceRes = await fetch("/api/generation/enhance", {
           method: "POST",
@@ -301,10 +307,13 @@ export function VideoDock({
             modelName: jobCreator?.name,
             modelId: jobModel.id,
             enhanceWithAi: jobEnhance,
-            hasImage: Boolean(jobReferenceUrl),
+            hasImage: Boolean(jobReferenceUrl) || hasIdentity,
             durationSec: jobShowDuration ? jobDuration : null,
             aspect: jobRatio,
-            refLabels: jobReferenceUrl ? ["source still"] : [],
+            refLabels: [
+              ...(hasIdentity ? ["my-model-identity"] : []),
+              ...(jobReferenceUrl ? ["source-still"] : []),
+            ],
           }),
         });
         const enhanceJson = (await enhanceRes.json()) as {
@@ -324,6 +333,23 @@ export function VideoDock({
         finalPrompt = "";
       }
 
+      // Lock My Model face + outfit when identity refs are attached.
+      if (acceptsPrompt && jobCreator?.name && hasIdentity) {
+        const idCount = identityUrls.length;
+        const stillIndex = jobReferenceUrl ? idCount + 1 : null;
+        finalPrompt = [
+          `IDENTITY LOCK: Image1${idCount > 1 ? `–Image${idCount}` : ""} is ${jobCreator.name} from My Models — use that exact face, hair, body, AND wardrobe/outfit.`,
+          stillIndex
+            ? `Image${stillIndex} is a scene/pose still only — do NOT take face, hair, body shape, or clothing from Image${stillIndex}.`
+            : "",
+          `Dress ${jobCreator.name} as in the My Models identity images, not a different outfit from a source still.`,
+          `Output aspect ratio must be ${jobRatio}.`,
+          finalPrompt,
+        ]
+          .filter(Boolean)
+          .join(" ");
+      }
+
       // Motion-control APIs take exactly one still; prompting models can use identity refs too.
       let stillUrl = jobReferenceUrl;
       if (jobModel.requiresMotionVideo && stillUrl) {
@@ -340,14 +366,16 @@ export function VideoDock({
         }
       }
 
+      // My Model identity FIRST (face+outfit), source still LAST (pose/scene).
+      // Old order put the still first → wrong clothes + adaptive framing.
       const imageUrls = jobModel.requiresMotionVideo
         ? stillUrl
           ? [stillUrl]
           : []
         : [
+            ...identityUrls,
             ...(stillUrl ? [stillUrl] : []),
-            ...(jobCreator?.refs.map((r) => r.publicUrl) ?? []),
-          ];
+          ].filter(Boolean);
 
       const createRes = await fetch("/api/generation/create", {
         method: "POST",
