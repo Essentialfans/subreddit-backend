@@ -222,7 +222,8 @@ export function sealWanReferencePromptForApi(options: {
   });
   const tail =
     `FINAL LOCK: Seamlessly replace every person in Video1 with Image1 (${name}). ` +
-    `The only face/body/hair on screen is Image1 (${name}). ` +
+    `The only face/body/hair/outfit on screen is exactly Image1 (${name}) as shown in that reference picture. ` +
+    `Do not mix in My Models library clothes or other photos. ` +
     `Video1 supplies motion/choreography/camera timing only — never Video1's identity. ` +
     `Output aspect ${options.aspect}.`;
   return `${seal}\n\n${body}\n\n${tail}`;
@@ -240,19 +241,16 @@ export function wanImageVideoRefSeal(options: {
   audioCount?: number;
   prompt?: string | null;
 }): string {
-  const name = options.modelName?.trim() || "My Model";
+  const name = options.modelName?.trim() || "the subject";
   const audioCount = options.audioCount ?? 0;
-  const extraImages =
-    options.imageCount > 1
-      ? ` Image2…Image${options.imageCount} are extra angles of the SAME person (${name}) — reinforce identity only.`
-      : "";
   const lines = [
     `EDIT VIDEO (CRITICAL — character replacement):`,
     `Seamlessly replace the female/male character in Video1 with the character from Image1 (${name}).`,
-    `Image1 = the ONLY identity for ${name}: face, hair, skin, age, body proportions.${extraImages}`,
+    `Image1 = the ONLY identity AND appearance source: face, hair, skin, age, body, AND clothing/outfit exactly as shown in that reference picture.`,
+    `Do NOT invent a different wardrobe, do NOT pull clothes/look from any My Models library, and do NOT blend other reference photos.`,
     `Video1 = motion / choreography / timing / body language / camera moves ONLY.`,
     `Do NOT keep, blend, or recreate the face, hair, body, skin, age, or identity of anyone visible in Video1.`,
-    `Match Video1's moves as closely as the written beats allow (including back-to-camera wardrobe beats).`,
+    `Match Video1's moves as closely as the written beats allow (including back-to-camera wardrobe beats) while keeping Image1's outfit unless the written beats explicitly change clothes.`,
     `Follow the timestamped beats in the prompt; Image1 (${name}) is the subject of every beat.`,
     `Output aspect ratio MUST be ${options.aspect}. Do not inherit Video1's wrong crop/zoom/landscape framing.`,
   ];

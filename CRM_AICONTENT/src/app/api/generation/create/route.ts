@@ -287,7 +287,7 @@ export async function POST(request: Request) {
         {
           ok: false,
           error:
-            "Wan reference video needs your My Model still (@Image1). Without it the output copies the woman from the reel.",
+            "Wan reference video needs your reference still as Image1. Without it the output copies the person from the reel.",
         },
         { status: 400 }
       );
