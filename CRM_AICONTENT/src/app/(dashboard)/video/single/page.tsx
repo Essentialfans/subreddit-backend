@@ -8,6 +8,7 @@ export default async function VideoGenerationPage({
     image?: string;
     prompt?: string;
     wan?: string;
+    from?: string;
   }>;
 }) {
   const params = await searchParams;
@@ -17,6 +18,7 @@ export default async function VideoGenerationPage({
       initialImageUrl={params.image ?? null}
       initialPrompt={params.prompt ?? null}
       initialVideoModelId={params.wan ?? null}
+      fromPromptClip={params.from === "prompt-clip"}
     />
   );
 }

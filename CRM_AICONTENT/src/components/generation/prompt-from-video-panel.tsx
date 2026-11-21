@@ -281,6 +281,9 @@ export function PromptFromVideoPanel({
           modelId: creator.id,
           wan: videoModelId,
           aspect,
+          // Studio must use My Model refs — not the source reel as starting frame.
+          identityMode: "my-model",
+          from: "prompt-clip",
         })
       );
     } catch {
@@ -289,12 +292,11 @@ export function PromptFromVideoPanel({
     const qs = new URLSearchParams({
       model: creator.id,
       wan: videoModelId,
+      from: "prompt-clip",
     });
     // Short prompts can ride the query; long ones use sessionStorage only.
     if (prompt.trim().length < 1500) {
       qs.set("prompt", prompt.trim());
-    } else {
-      qs.set("from", "prompt-clip");
     }
     window.location.href = `/video/single?${qs.toString()}`;
   }
@@ -308,9 +310,12 @@ export function PromptFromVideoPanel({
               Source clip
             </p>
             <p className="mt-1 text-sm text-muted-foreground">
-              Drop the reel to recreate. We capture a dense full-timeline frame
-              grid, inventory every beat, then build a Wan prompt with{" "}
-              <strong>My Model</strong> as who appears — not the source face.
+              Drop a reference reel to <strong>analyze</strong> — this page only
+              writes a Wan prompt. It does <strong>not</strong> remake the video.
+              Next: make/use a <strong>My Model</strong> starting still (your
+              usual Image → Send to video), then generate in Video studio. Never
+              use a freeze-frame of the influencer from this reel as the starting
+              frame — that remakes their face.
             </p>
           </div>
           <div className="flex flex-1 flex-col items-center justify-center gap-4 p-6">

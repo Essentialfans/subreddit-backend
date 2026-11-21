@@ -88,6 +88,161 @@ export function videoNoTextRule(userText?: string): string {
   return "NO burned-in captions, meme text, subtitles, stickers, logos, or watermarks on the video. Do not recreate source overlay text like \"Wait for it…\". Clean plate — spoken dialogue is audio only, never on-screen text.";
 }
 
+export type WanSpeechGender = "feminine" | "masculine" | "neutral";
+
+/** Infer speaker gender from prompt + model name for natural speech seals. */
+export function inferWanSpeechGender(options: {
+  prompt?: string | null;
+  modelName?: string | null;
+}): WanSpeechGender {
+  const text = `${options.modelName ?? ""} ${options.prompt ?? ""}`.toLowerCase();
+  const masc =
+    /\b(he|him|his|man|male|guy|gentleman|boyfriend|husband|king|mr\.?)\b/.test(
+      text
+    );
+  const fem =
+    /\b(she|her|hers|woman|female|girl|lady|girlfriend|wife|queen|miss|mrs\.?|ms\.?)\b/.test(
+      text
+    );
+  if (masc && !fem) return "masculine";
+  if (fem && !masc) return "feminine";
+  // Product default: most My Models are women; still avoid robotic either way.
+  if (masc && fem) return "neutral";
+  return "feminine";
+}
+
+/**
+ * Hard ban on squeaky/robotic TTS. Gender follows who is speaking.
+ * A random unrelated voice MP3 is NOT a reliable clone for new lines —
+ * this rule is the always-on quality floor for prompted speech.
+ */
+export function wanNaturalSpeechRule(options?: {
+  gender?: WanSpeechGender;
+  prompt?: string | null;
+  modelName?: string | null;
+  hasAudioRef?: boolean;
+}): string {
+  const gender =
+    options?.gender ??
+    inferWanSpeechGender({
+      prompt: options?.prompt,
+      modelName: options?.modelName,
+    });
+  const who =
+    gender === "masculine"
+      ? "a real adult man"
+      : gender === "neutral"
+        ? "a real adult human"
+        : "a real adult woman";
+  const tone =
+    gender === "masculine"
+      ? "warm natural masculine speaking voice, calm and clear"
+      : gender === "neutral"
+        ? "warm natural speaking voice, calm and clear"
+        : "gentle soft natural feminine speaking voice, warm and calm";
+  const audioBit = options?.hasAudioRef
+    ? " Prefer the timbre/delivery of @Audio1 when present, but still keep speech fully human."
+    : "";
+  return [
+    `VOICE (CRITICAL): spoken lines must sound like ${who} — ${tone}, close-mic studio presence, natural breath and pacing.`,
+    `FORBIDDEN: robotic TTS, squeaky voice, chipmunk, metallic, high-pitched synthetic, cartoon, vocoder, over-processed AI speech.`,
+    `Dialogue is audio only (no on-screen text).${audioBit}`,
+  ].join(" ");
+}
+
+/** @deprecated use wanNaturalSpeechRule */
+export function wanGentleVoiceRule(): string {
+  return wanNaturalSpeechRule({ gender: "feminine" });
+}
+
+/**
+ * Server-side seal for Wan jobs with @Image + @Video.
+ * Runs on the API so a weak client prompt cannot copy the reel's woman.
+ */
+export function sealWanReferencePromptForApi(options: {
+  prompt: string;
+  modelName?: string | null;
+  aspect: string;
+  imageCount: number;
+  videoCount: number;
+  audioCount?: number;
+}): string {
+  const base = options.prompt.trim();
+  const seal = wanImageVideoRefSeal({
+    modelName: options.modelName,
+    aspect: options.aspect,
+    imageCount: Math.max(1, options.imageCount),
+    videoCount: options.videoCount,
+    audioCount: options.audioCount ?? 0,
+    prompt: base,
+  });
+  // Put seal first AND repeat the identity ban at the end so Enhance/weak
+  // prompts cannot bury it.
+  const tail =
+    `FINAL LOCK: The only person on screen is from @Image1 (My Model). ` +
+    `@Video1 is motion guidance only — do NOT show or recreate the woman from @Video1. ` +
+    `Output MUST be ${options.aspect}.`;
+  return `${seal}\n\n${base}\n\n${tail}`;
+}
+
+/**
+ * Wan 3.0 reference_image_urls + reference_video_urls (+ optional audio) mode.
+ * Image = who appears. Video = motion only. Audio = voice.
+ */
+export function wanImageVideoRefSeal(options: {
+  modelName?: string | null;
+  aspect: string;
+  imageCount: number;
+  videoCount: number;
+  audioCount?: number;
+  prompt?: string | null;
+}): string {
+  const name = options.modelName?.trim() || "My Model";
+  const audioCount = options.audioCount ?? 0;
+  const imgTag =
+    options.imageCount > 1
+      ? `@Image1…@Image${options.imageCount}`
+      : "@Image1";
+  const lines = [
+    `REFERENCE SPLIT (CRITICAL):`,
+    `${imgTag} = identity + face + body + hair for ${name} ONLY. Match the person in those images.`,
+  ];
+  if (options.videoCount > 0) {
+    const vidTag =
+      options.videoCount > 1
+        ? `@Video1…@Video${options.videoCount}`
+        : "@Video1";
+    lines.push(
+      `${vidTag} = motion / choreography / timing / body language ONLY — match her moves as closely as the prompt allows.`,
+      `NEVER copy the face, hair, body type, skin, age, or identity of anyone visible in ${vidTag}.`,
+      `If ${vidTag} shows a different woman, ignore her appearance completely — only reuse how she moves.`,
+      `Follow the written timestamped beats; use ${vidTag} to make that motion accurate (including back-to-camera bra/prop beats).`,
+      `Output aspect ratio MUST be ${options.aspect} (vertical story if 9:16). Do not inherit ${vidTag}'s crop, zoom, or landscape framing.`
+    );
+  } else {
+    lines.push(
+      `Output aspect ratio MUST be ${options.aspect} (vertical story if 9:16).`
+    );
+  }
+  if (audioCount > 0) {
+    lines.push(
+      `@Audio1 = preferred speaking voice sample from the source reel. Use it for timbre/delivery of the written dialogue; keep speech fully human — never replace it with robotic TTS.`
+    );
+  }
+  // Always seal natural human speech (gender-aware) — even with @Audio1.
+  lines.push(
+    wanNaturalSpeechRule({
+      prompt: options.prompt,
+      modelName: options.modelName,
+      hasAudioRef: audioCount > 0,
+    })
+  );
+  lines.push(
+    `Full-body framing as the prompt describes — do not zoom into feet/legs unless a beat says so.`
+  );
+  return lines.join(" ");
+}
+
 /** Hard face keep-list — Seedream/Nano respond better to explicit preserve lists. */
 export function recreateFaceKeepList(name: string): string {
   return `KEEP from Image 1 (${name}) exactly: face geometry, eye shape/color, nose, lips, jawline, cheekbones, eyebrows, skin tone, freckles/moles, hair color, hair length, hair texture, age, and body proportions. Do not blend with the LAST image's face.`;

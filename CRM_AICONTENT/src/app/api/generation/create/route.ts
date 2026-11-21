@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { createKieTask } from "@/lib/kie/client";
 import { rehostToKie } from "@/lib/kie/files";
 import { loadKieApiKey, requireUserId } from "@/lib/kie/keys";
-import { buildKieInput, findModel } from "@/lib/kie/models";
+import { buildKieInput, findModel, isWan3Family } from "@/lib/kie/models";
+import { sealWanReferencePromptForApi } from "@/lib/generation/prompt-recipes";
 
 export const runtime = "nodejs";
 
@@ -33,7 +34,9 @@ export async function POST(request: Request) {
       lastFrameUrl?: string | null;
       videoUrl?: string | null;
       referenceVideoUrls?: string[] | null;
+      referenceAudioUrls?: string[] | null;
       audioUrl?: string | null;
+      modelName?: string | null;
     };
 
     const model = body.modelId ? findModel(body.modelId) : undefined;
@@ -44,7 +47,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const prompt = body.prompt?.trim() ?? "";
+    let prompt = body.prompt?.trim() ?? "";
     if (!model.promptOptional && prompt.length < 3) {
       return NextResponse.json(
         { ok: false, error: "Prompt is too short" },
@@ -114,6 +117,14 @@ export async function POST(request: Request) {
       ),
     ].slice(0, model.maxReferenceVideos ?? 5);
 
+    let referenceAudioUrls = [
+      ...new Set(
+        (body.referenceAudioUrls ?? [])
+          .map((u) => (typeof u === "string" ? u.trim() : ""))
+          .filter(Boolean)
+      ),
+    ].slice(0, model.maxReferenceAudios ?? 5);
+
     let lastFrameUrl = body.lastFrameUrl?.trim() || null;
 
     if (referenceVideoUrls.length && !model.supportsReferenceMedia) {
@@ -121,6 +132,16 @@ export async function POST(request: Request) {
         {
           ok: false,
           error: `${model.label} does not support reference videos — use Wan 3.0 / Prime, or Motion Control.`,
+        },
+        { status: 400 }
+      );
+    }
+
+    if (referenceAudioUrls.length && !model.maxReferenceAudios) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `${model.label} does not support reference audio — use Wan 3.0 / Prime with @Audio1.`,
         },
         { status: 400 }
       );
@@ -147,7 +168,10 @@ export async function POST(request: Request) {
     }
 
     // kie: reference_* cannot mix with first/last frame
-    if (referenceVideoUrls.length && lastFrameUrl) {
+    if (
+      (referenceVideoUrls.length || referenceAudioUrls.length) &&
+      lastFrameUrl
+    ) {
       lastFrameUrl = null;
     }
 
@@ -198,6 +222,20 @@ export async function POST(request: Request) {
         }
         referenceVideoUrls = rehostedVideos;
       }
+      if (referenceAudioUrls.length) {
+        const rehostedAudios: string[] = [];
+        for (const [i, url] of referenceAudioUrls.entries()) {
+          rehostedAudios.push(
+            await rehostToKie({
+              apiKey,
+              fileUrl: url,
+              uploadPath: `ainstareel/${userId}/ref-audio`,
+              fileName: `ref-audio-${i + 1}.mp3`,
+            })
+          );
+        }
+        referenceAudioUrls = rehostedAudios;
+      }
     }
 
     const allowedDurations = model.durations ?? [];
@@ -219,16 +257,49 @@ export async function POST(request: Request) {
         ? model.defaultResolution ?? allowedResolutions[0]
         : requestedResolution;
 
+    const aspect = body.aspect || model.defaultAspect;
+
+    // Wan @Image + @Video: identity MUST stay on the still. Seal on the server
+    // so a weak client prompt ("@Video1 reference video") cannot copy the reel woman.
+    if (
+      isWan3Family(model.id) &&
+      referenceVideoUrls.length > 0 &&
+      imageUrls.length > 0
+    ) {
+      prompt = sealWanReferencePromptForApi({
+        prompt,
+        modelName: body.modelName,
+        aspect,
+        imageCount: imageUrls.length,
+        videoCount: referenceVideoUrls.length,
+        audioCount: referenceAudioUrls.length,
+      });
+    } else if (
+      isWan3Family(model.id) &&
+      referenceVideoUrls.length > 0 &&
+      imageUrls.length === 0
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "Wan reference video needs your My Model still (@Image1). Without it the output copies the woman from the reel.",
+        },
+        { status: 400 }
+      );
+    }
+
     const payload = buildKieInput({
       model,
       prompt,
-      aspect: body.aspect || model.defaultAspect,
+      aspect,
       duration,
       resolution,
       imageUrls,
       lastFrameUrl,
       videoUrl,
       referenceVideoUrls,
+      referenceAudioUrls,
       audioUrl: body.audioUrl,
     });
 
