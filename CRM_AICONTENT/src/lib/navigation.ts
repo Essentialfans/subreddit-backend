@@ -1,5 +1,6 @@
 import {
   Clapperboard,
+  Download,
   Film,
   FolderOpen,
   Image,
@@ -90,6 +91,11 @@ export const navigation: NavSection[] = [
   {
     title: "TOOLS",
     items: [
+      {
+        label: "Instagram import",
+        href: "/tools/instagram-import",
+        icon: Download,
+      },
       { label: "Image Upscaler", href: "/tools/upscaler", icon: Upload },
       { label: "Voice Changer", href: "/tools/voice-changer", icon: Repeat },
       {

@@ -26,8 +26,10 @@ const WAN_TARGETS = [
 
 export function PromptFromVideoPanel({
   initialModelId,
+  initialSourceUrl,
 }: {
   initialModelId?: string | null;
+  initialSourceUrl?: string | null;
 }) {
   const [creatorModels, setCreatorModels] = useState<CreatorModel[]>([]);
   const [creatorId, setCreatorId] = useState<string | null>(
@@ -95,7 +97,7 @@ export function PromptFromVideoPanel({
     [llm]
   );
 
-  async function onPickFile(file: File) {
+  async function prepareFromFile(file: File, existingVideoUrl?: string) {
     setError("");
     setPrompt("");
     setTranscript("");
@@ -107,7 +109,7 @@ export function PromptFromVideoPanel({
     if (previewUrl.startsWith("blob:")) URL.revokeObjectURL(previewUrl);
     setPreviewUrl(URL.createObjectURL(file));
     setPreparing(true);
-    setUploadPct(0);
+    setUploadPct(existingVideoUrl ? null : 0);
     setPrepareStatus("Capturing full-timeline frames…");
     try {
       const extractPromise = extractKeyframesFromVideoFile(file, {
@@ -117,10 +119,11 @@ export function PromptFromVideoPanel({
           setPrepareStatus(`Capturing frames ${done}/${total}…`);
         },
       });
-      const uploadPromise = uploadGenerationFile(file, setUploadPct);
       const [{ frames, durationSec: dur }, uploadedVideo] = await Promise.all([
         extractPromise,
-        uploadPromise,
+        existingVideoUrl
+          ? Promise.resolve(existingVideoUrl)
+          : uploadGenerationFile(file, setUploadPct),
       ]);
       setDurationSec(dur);
       setVideoUrl(uploadedVideo);
@@ -161,6 +164,43 @@ export function PromptFromVideoPanel({
       setPreparing(false);
     }
   }
+
+  async function onPickFile(file: File) {
+    await prepareFromFile(file);
+  }
+
+  // Handoff from Instagram import (or any hosted MP4 URL).
+  useEffect(() => {
+    const src = initialSourceUrl?.trim();
+    if (!src) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        setPreparing(true);
+        setPrepareStatus("Loading imported clip…");
+        const res = await fetch(src, { cache: "no-store" });
+        if (!res.ok) throw new Error(`Could not load source video (${res.status})`);
+        const blob = await res.blob();
+        if (cancelled) return;
+        const file = new File([blob], "imported-reel.mp4", {
+          type: blob.type || "video/mp4",
+        });
+        await prepareFromFile(file, src);
+      } catch (err) {
+        if (!cancelled) {
+          setError(
+            err instanceof Error ? err.message : "Could not load imported clip"
+          );
+          setPreparing(false);
+          setPrepareStatus("");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialSourceUrl]);
 
   async function onGeneratePrompt() {
     setError("");
