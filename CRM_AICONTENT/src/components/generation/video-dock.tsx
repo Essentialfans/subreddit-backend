@@ -1,7 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import {
   Check,
   ChevronDown,
@@ -34,6 +41,21 @@ type Slot =
   | { state: "generating" }
   | { state: "done"; url: string }
   | { state: "error"; message: string };
+
+/** Claim one slot for a new job without touching ones already generating. */
+function claimSlot(prev: Slot[]): { slots: Slot[]; index: number } {
+  const slots = [...prev];
+  for (const state of ["empty", "error", "done"] as const) {
+    const index = slots.findIndex((s) => s.state === state);
+    if (index >= 0) {
+      slots[index] = { state: "generating" };
+      return { slots, index };
+    }
+  }
+  const index = slots.length;
+  slots.push({ state: "generating" });
+  return { slots, index };
+}
 
 type OpenMenu = null | "model" | "gen" | "ratio" | "duration" | "resolution";
 
@@ -109,8 +131,8 @@ export function VideoDock({
   );
   const [audioUrl, setAudioUrl] = useState("");
   const [enhance, setEnhance] = useState(true);
-  const [slot, setSlot] = useState<Slot>({ state: "empty" });
-  const [busy, setBusy] = useState(false);
+  const [slots, setSlots] = useState<Slot[]>([{ state: "empty" }]);
+  const [activeJobs, setActiveJobs] = useState(0);
   const [error, setError] = useState("");
   const [keyReady, setKeyReady] = useState<boolean | null>(null);
   const [openMenu, setOpenMenu] = useState<OpenMenu>(null);
@@ -240,27 +262,49 @@ export function VideoDock({
       return;
     }
 
-    setBusy(true);
-    setSlot({ state: "generating" });
+    // Snapshot so a second Generate mid-flight doesn't mix jobs.
+    const jobModel = videoModel;
+    const jobPrompt = prompt.trim();
+    const jobEnhance = enhance;
+    const jobRatio = ratio;
+    const jobDuration = duration;
+    const jobResolution = resolution;
+    const jobReferenceUrl = referenceUrl.trim();
+    const jobEndFrameUrl = endFrameUrl.trim();
+    const jobMotionVideoUrl = motionVideoUrl.trim();
+    const jobReferenceVideoUrls = [...referenceVideoUrls];
+    const jobAudioUrl = audioUrl.trim();
+    const jobCreator = creator;
+    const jobCreatorId = creatorId;
+    const jobShowDuration = showDuration;
+    const jobShowResolution = showResolution;
+
+    let claimedIndex = 0;
+    setSlots((prev) => {
+      const claimed = claimSlot(prev);
+      claimedIndex = claimed.index;
+      return claimed.slots;
+    });
+    setActiveJobs((n) => n + 1);
 
     try {
-      let finalPrompt = prompt.trim();
+      let finalPrompt = jobPrompt;
       // Wan Animate Move has no prompt field — skip enhance/identity text.
-      const acceptsPrompt = !videoModel.omitPrompt;
-      if (acceptsPrompt && enhance) {
+      const acceptsPrompt = !jobModel.omitPrompt;
+      if (acceptsPrompt && jobEnhance) {
         const enhanceRes = await fetch("/api/generation/enhance", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             mode: "free",
-            userText: prompt,
-            modelName: creator?.name,
-            modelId: videoModel.id,
-            enhanceWithAi: enhance,
-            hasImage: Boolean(referenceUrl.trim()),
-            durationSec: showDuration ? duration : null,
-            aspect: ratio,
-            refLabels: referenceUrl ? ["source still"] : [],
+            userText: jobPrompt,
+            modelName: jobCreator?.name,
+            modelId: jobModel.id,
+            enhanceWithAi: jobEnhance,
+            hasImage: Boolean(jobReferenceUrl),
+            durationSec: jobShowDuration ? jobDuration : null,
+            aspect: jobRatio,
+            refLabels: jobReferenceUrl ? ["source still"] : [],
           }),
         });
         const enhanceJson = (await enhanceRes.json()) as {
@@ -274,18 +318,18 @@ export function VideoDock({
           // do not append a generic video suffix (that would mix formats).
           finalPrompt = enhanceJson.prompt;
         }
-      } else if (acceptsPrompt && creator?.name) {
-        finalPrompt = `${finalPrompt} Featuring ${creator.name}, matching reference identity.`;
+      } else if (acceptsPrompt && jobCreator?.name) {
+        finalPrompt = `${finalPrompt} Featuring ${jobCreator.name}, matching reference identity.`;
       } else if (!acceptsPrompt) {
         finalPrompt = "";
       }
 
       // Motion-control APIs take exactly one still; prompting models can use identity refs too.
-      let stillUrl = referenceUrl.trim();
-      if (videoModel.requiresMotionVideo && stillUrl) {
+      let stillUrl = jobReferenceUrl;
+      if (jobModel.requiresMotionVideo && stillUrl) {
         const prepared = await ensureStillFitsModel({
           url: stillUrl,
-          modelId: videoModel.id,
+          modelId: jobModel.id,
         });
         if (prepared.compressed && prepared.blob) {
           // Generated stills (often ~8MB PNG) exceed Wan Animate’s 5MB cap.
@@ -296,36 +340,36 @@ export function VideoDock({
         }
       }
 
-      const imageUrls = videoModel.requiresMotionVideo
+      const imageUrls = jobModel.requiresMotionVideo
         ? stillUrl
           ? [stillUrl]
           : []
         : [
             ...(stillUrl ? [stillUrl] : []),
-            ...(creator?.refs.map((r) => r.publicUrl) ?? []),
+            ...(jobCreator?.refs.map((r) => r.publicUrl) ?? []),
           ];
 
       const createRes = await fetch("/api/generation/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          modelId: videoModel.id,
+          modelId: jobModel.id,
           prompt: finalPrompt,
-          aspect: ratio,
-          duration: showDuration ? duration : undefined,
-          resolution: showResolution ? resolution : undefined,
+          aspect: jobRatio,
+          duration: jobShowDuration ? jobDuration : undefined,
+          resolution: jobShowResolution ? jobResolution : undefined,
           imageUrls,
           lastFrameUrl:
-            videoModel.supportsReferenceMedia &&
-            !referenceVideoUrls.length &&
-            endFrameUrl.trim()
-              ? endFrameUrl.trim()
+            jobModel.supportsReferenceMedia &&
+            !jobReferenceVideoUrls.length &&
+            jobEndFrameUrl
+              ? jobEndFrameUrl
               : null,
-          videoUrl: motionVideoUrl.trim() || null,
-          referenceVideoUrls: videoModel.supportsReferenceMedia
-            ? referenceVideoUrls
+          videoUrl: jobMotionVideoUrl || null,
+          referenceVideoUrls: jobModel.supportsReferenceMedia
+            ? jobReferenceVideoUrls
             : [],
-          audioUrl: audioUrl.trim() || null,
+          audioUrl: jobAudioUrl || null,
         }),
       });
       const created = (await createRes.json()) as {
@@ -343,15 +387,27 @@ export function VideoDock({
           kind: "video",
           sourceUrl: url,
           prompt: finalPrompt,
-          modelId: videoModel.id,
-          modelLabel: videoModel.label,
-          creatorModelId: creatorId,
-          aspect: ratio,
-          resolution: showResolution ? resolution : undefined,
+          modelId: jobModel.id,
+          modelLabel: jobModel.label,
+          creatorModelId: jobCreatorId,
+          aspect: jobRatio,
+          resolution: jobShowResolution ? jobResolution : undefined,
         });
-        setSlot({ state: "done", url: persisted.publicUrl });
+        setSlots((prev) => {
+          const next = [...prev];
+          if (claimedIndex < next.length) {
+            next[claimedIndex] = { state: "done", url: persisted.publicUrl };
+          }
+          return next;
+        });
       } catch (saveErr) {
-        setSlot({ state: "done", url });
+        setSlots((prev) => {
+          const next = [...prev];
+          if (claimedIndex < next.length) {
+            next[claimedIndex] = { state: "done", url };
+          }
+          return next;
+        });
         setError(
           `Video ready, but Outputs save failed: ${
             saveErr instanceof Error ? saveErr.message : "unknown error"
@@ -365,63 +421,79 @@ export function VideoDock({
           "kie.ai returned Internal Error — check the still (≤5MB jpeg/png) and motion clip (mp4/mov) are public URLs kie can fetch, then re-upload and retry.";
       }
       setError(message);
-      setSlot({ state: "error", message });
+      setSlots((prev) => {
+        const next = [...prev];
+        if (claimedIndex < next.length) {
+          next[claimedIndex] = { state: "error", message };
+        }
+        return next;
+      });
     } finally {
-      setBusy(false);
+      setActiveJobs((n) => Math.max(0, n - 1));
     }
   }
 
   return (
     <div className="gen-dock-page">
-      <div className="gen-dock-stage gen-dock-stage--video">
-        <div className="gen-dock-cell">
-          {slot.state === "generating" ? (
-            <div className="flex flex-col items-center gap-2 text-muted-foreground">
-              <Loader2 className="h-8 w-8 animate-spin text-primary" />
-              <span className="text-sm">Generating video…</span>
-            </div>
-          ) : slot.state === "done" ? (
-            <div className="group relative h-full w-full">
-              <video
-                src={slot.url}
-                controls
-                className="h-full w-full bg-black object-contain"
-              />
-              <div className="pointer-events-none absolute inset-x-0 bottom-14 z-10 flex flex-wrap justify-center gap-2 opacity-100">
-                <button
-                  type="button"
-                  onClick={() =>
-                    void downloadAsset(
-                      slot.url,
-                      `${creator?.slug || "video"}-clip.mp4`
-                    )
-                  }
-                  className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full bg-white/95 px-3 py-1.5 text-xs font-semibold text-zinc-900 shadow"
-                >
-                  <Download className="h-3.5 w-3.5" />
-                  Download
-                </button>
-                <Link
-                  href="/content/outputs"
-                  className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-white/30 bg-black/40 px-3 py-1.5 text-xs font-medium text-white"
-                >
-                  Outputs
-                </Link>
+      <div
+        className="gen-dock-stage gen-dock-stage--video"
+        style={
+          {
+            "--video-slot-count": Math.max(1, slots.length),
+          } as CSSProperties
+        }
+      >
+        {slots.map((slot, i) => (
+          <div key={i} className="gen-dock-cell">
+            {slot.state === "generating" ? (
+              <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                <span className="text-sm">Generating video…</span>
               </div>
-            </div>
-          ) : slot.state === "error" ? (
-            <p className="px-6 text-center text-sm text-accent-red">
-              {slot.message}
-            </p>
-          ) : (
-            <div className="flex flex-col items-center gap-1 px-6 text-center">
-              <p className="text-sm text-muted-foreground">Video stage</p>
-              <p className="max-w-sm text-xs text-muted-foreground/80">
-                Pick a model, set duration and resolution, then generate.
+            ) : slot.state === "done" ? (
+              <div className="group relative h-full w-full">
+                <video
+                  src={slot.url}
+                  controls
+                  className="h-full w-full bg-black object-contain"
+                />
+                <div className="pointer-events-none absolute inset-x-0 bottom-14 z-10 flex flex-wrap justify-center gap-2 opacity-100">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void downloadAsset(
+                        slot.url,
+                        `${creator?.slug || "video"}-clip-${i + 1}.mp4`
+                      )
+                    }
+                    className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full bg-white/95 px-3 py-1.5 text-xs font-semibold text-zinc-900 shadow"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    Download
+                  </button>
+                  <Link
+                    href="/content/outputs"
+                    className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-white/30 bg-black/40 px-3 py-1.5 text-xs font-medium text-white"
+                  >
+                    Outputs
+                  </Link>
+                </div>
+              </div>
+            ) : slot.state === "error" ? (
+              <p className="px-6 text-center text-sm text-accent-red">
+                {slot.message}
               </p>
-            </div>
-          )}
-        </div>
+            ) : (
+              <div className="flex flex-col items-center gap-1 px-6 text-center">
+                <p className="text-sm text-muted-foreground">Video stage</p>
+                <p className="max-w-sm text-xs text-muted-foreground/80">
+                  Pick a model, set duration and resolution, then generate.
+                  You can start another while one is running.
+                </p>
+              </div>
+            )}
+          </div>
+        ))}
         <div className="gen-dock-cell gen-dock-cell--aside flex-col gap-3 px-4 text-center">
           <p className="text-xs font-medium text-muted-foreground">
             Source still
@@ -1114,16 +1186,22 @@ export function VideoDock({
           <div className="ml-auto">
             <button
               type="button"
-              disabled={busy}
               onClick={() => void onGenerate()}
-              className="inline-flex h-10 items-center gap-2 rounded-full bg-primary px-5 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+              title={
+                activeJobs > 0
+                  ? "Start another video while others finish"
+                  : "Generate video"
+              }
+              className="inline-flex h-10 cursor-pointer items-center gap-2 rounded-full bg-primary px-5 text-sm font-semibold text-primary-foreground hover:bg-primary/90"
             >
-              {busy ? (
+              {activeJobs > 0 ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <Sparkles className="h-4 w-4" />
               )}
-              Generate video
+              {activeJobs > 0
+                ? `Generate another (${activeJobs} running)`
+                : "Generate video"}
             </button>
           </div>
         </div>

@@ -1,7 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import {
   ArrowRight,
   Check,
@@ -39,6 +46,32 @@ type Slot =
   | { state: "generating" }
   | { state: "done"; url: string }
   | { state: "error"; message: string };
+
+/** Claim slots for a new job without touching ones already generating. */
+function claimSlots(
+  prev: Slot[],
+  count: number
+): { slots: Slot[]; indices: number[] } {
+  const slots = [...prev];
+  const indices: number[] = [];
+  const take = (states: Array<Slot["state"]>) => {
+    for (let i = 0; i < slots.length && indices.length < count; i++) {
+      if (indices.includes(i)) continue;
+      if (states.includes(slots[i].state)) {
+        indices.push(i);
+        slots[i] = { state: "generating" };
+      }
+    }
+  };
+  take(["empty"]);
+  take(["error"]);
+  take(["done"]);
+  while (indices.length < count) {
+    indices.push(slots.length);
+    slots.push({ state: "generating" });
+  }
+  return { slots, indices };
+}
 
 function RatioIcon({ id }: { id: string }) {
   if (id === "1:1") return <Square className="h-3.5 w-3.5" />;
@@ -112,7 +145,7 @@ export function GenerateDock({
     { state: "empty" },
     { state: "empty" },
   ]);
-  const [busy, setBusy] = useState(false);
+  const [activeJobs, setActiveJobs] = useState(0);
   const [error, setError] = useState("");
   const [expandedPrompt, setExpandedPrompt] = useState("");
   const [keyReady, setKeyReady] = useState<boolean | null>(null);
@@ -259,24 +292,48 @@ export function GenerateDock({
       return;
     }
 
-    const preset = PRESET_CATEGORIES.find((p) => p.id === presetId);
-    const mentions = parseAtMentions(prompt);
+    // Snapshot form values so a second Generate mid-flight doesn't mix jobs.
+    const jobMode = mode;
+    const jobPrompt = prompt;
+    const jobEnhance = enhance;
+    const jobQuantity = quantity;
+    const jobRatio = ratio;
+    const jobResolution = resolution;
+    const jobGenModelId = genModelId;
+    const jobPresetId = presetId;
+    const jobPresetQuality = presetQuality;
+    const jobKeepPose = keepPose;
+    const jobSourceUrl = sourceUrl;
+    const jobClothing = clothing;
+    const jobExternalClothingUrl = externalClothingUrl;
+    const jobExtraRefs = [...extraRefs];
+    const jobCreatorId = creatorId;
+    const jobCreator = creator;
+
+    const preset = PRESET_CATEGORIES.find((p) => p.id === jobPresetId);
+    const mentions = parseAtMentions(jobPrompt);
     const refLabels = [
       ...mentions.refTags,
-      ...extraRefs.map((_, i) => `ref${i + 1}`),
-      ...(mode === "recreate" ? ["source"] : []),
-      ...(clothing === "external" && externalClothingUrl ? ["clothing"] : []),
+      ...jobExtraRefs.map((_, i) => `ref${i + 1}`),
+      ...(jobMode === "recreate" ? ["source"] : []),
+      ...(jobClothing === "external" && jobExternalClothingUrl
+        ? ["clothing"]
+        : []),
     ];
 
-    setBusy(true);
-    setSlots((prev) =>
-      prev.map((s, i) => (i < quantity ? { state: "generating" } : s))
-    );
+    let claimedIndices: number[] = [];
+    setSlots((prev) => {
+      const claimed = claimSlots(prev, jobQuantity);
+      claimedIndices = claimed.indices;
+      return claimed.slots;
+    });
+    setActiveJobs((n) => n + 1);
 
     try {
-      const hasSource = mode === "recreate" && Boolean(sourceUrl.trim());
-      const identityUrls = creator?.refs.map((r) => r.publicUrl) ?? [];
-      const activeGenId = mode === "presets" ? presetQuality : genModelId;
+      const hasSource = jobMode === "recreate" && Boolean(jobSourceUrl.trim());
+      const identityUrls = jobCreator?.refs.map((r) => r.publicUrl) ?? [];
+      const activeGenId =
+        jobMode === "presets" ? jobPresetQuality : jobGenModelId;
       // Seedream i2i edits image_urls[0] — put SOURCE first so we edit the scene,
       // then identity refs. Nano Banana prefers identity refs first.
       const seedreamSourceFirst = activeGenId.startsWith("seedream");
@@ -287,20 +344,20 @@ export function GenerateDock({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          mode,
-          userText: prompt,
-          modelName: creator?.name,
+          mode: jobMode,
+          userText: jobPrompt,
+          modelName: jobCreator?.name,
           modelId: activeGenId,
-          presetHint: mode === "presets" ? preset?.promptHint : undefined,
-          enhanceWithAi: enhance || mode !== "free",
+          presetHint: jobMode === "presets" ? preset?.promptHint : undefined,
+          enhanceWithAi: jobEnhance || jobMode !== "free",
           hasImage: Boolean(
-            hasSource || identityUrls.length > 0 || extraRefs.length > 0
+            hasSource || identityUrls.length > 0 || jobExtraRefs.length > 0
           ),
           hasSourceImage: hasSource,
-          clothing: mode === "recreate" ? clothing : null,
-          aspect: ratio,
+          clothing: jobMode === "recreate" ? jobClothing : null,
+          aspect: jobRatio,
           refLabels,
-          keepPose,
+          keepPose: jobKeepPose,
           recreateImageOrder,
         }),
       });
@@ -315,111 +372,126 @@ export function GenerateDock({
       setExpandedPrompt(enhanceJson.prompt);
 
       const clothingUrls =
-        clothing === "external" && externalClothingUrl.trim()
-          ? [externalClothingUrl.trim()]
+        jobClothing === "external" && jobExternalClothingUrl.trim()
+          ? [jobExternalClothingUrl.trim()]
           : [];
       // Recreate image order:
       // - Seedream: SOURCE first (edit canvas), then identity (+ clothing)
       // - Others: identity first, SOURCE last (pose/scene only)
       const imageUrls =
-        mode === "recreate"
+        jobMode === "recreate"
           ? seedreamSourceFirst
             ? [
-                sourceUrl.trim(),
+                jobSourceUrl.trim(),
                 ...identityUrls,
-                ...extraRefs,
+                ...jobExtraRefs,
                 ...clothingUrls,
               ].filter(Boolean)
             : [
                 ...identityUrls,
-                ...extraRefs,
+                ...jobExtraRefs,
                 ...clothingUrls,
-                sourceUrl.trim(),
+                jobSourceUrl.trim(),
               ].filter(Boolean)
-          : [...identityUrls, ...extraRefs];
+          : [...identityUrls, ...jobExtraRefs];
 
-      const tasks: Promise<string>[] = [];
-      for (let i = 0; i < quantity; i++) {
-        tasks.push(
-          (async () => {
-            const createRes = await fetch("/api/generation/create", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                modelId: mode === "presets" ? presetQuality : genModelId,
-                prompt: enhanceJson.prompt,
-                aspect: ratio,
-                resolution,
-                imageUrls,
-              }),
-            });
-            const created = (await createRes.json()) as {
-              ok: boolean;
-              taskId?: string;
-              error?: string;
-            };
-            if (!createRes.ok || !created.ok || !created.taskId) {
-              throw new Error(created.error || "Create failed");
-            }
-            return pollTask(created.taskId);
-          })()
-        );
-      }
-
-      const urls = await Promise.all(tasks);
       const selectedModelId =
-        mode === "presets" ? presetQuality : genModelId;
+        jobMode === "presets" ? jobPresetQuality : jobGenModelId;
       const selectedModel = IMAGE_MODELS.find((m) => m.id === selectedModelId);
-      const displayUrls: string[] = [];
-      const saveErrors: string[] = [];
-      for (const url of urls) {
+
+      const tasks = claimedIndices.map(async (slotIndex) => {
         try {
-          const saved = await saveOutputToGallery({
-            kind: "image",
-            sourceUrl: url,
-            prompt: enhanceJson.prompt,
-            modelId: selectedModelId,
-            modelLabel: selectedModel?.label,
-            creatorModelId: creatorId,
-            aspect: ratio,
-            resolution,
+          const createRes = await fetch("/api/generation/create", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              modelId: selectedModelId,
+              prompt: enhanceJson.prompt,
+              aspect: jobRatio,
+              resolution: jobResolution,
+              imageUrls,
+            }),
           });
-          displayUrls.push(saved.publicUrl);
-        } catch (saveErr) {
-          displayUrls.push(url);
-          saveErrors.push(
-            saveErr instanceof Error ? saveErr.message : "Outputs save failed"
-          );
+          const created = (await createRes.json()) as {
+            ok: boolean;
+            taskId?: string;
+            error?: string;
+          };
+          if (!createRes.ok || !created.ok || !created.taskId) {
+            throw new Error(created.error || "Create failed");
+          }
+          const url = await pollTask(created.taskId);
+          let displayUrl = url;
+          try {
+            const saved = await saveOutputToGallery({
+              kind: "image",
+              sourceUrl: url,
+              prompt: enhanceJson.prompt,
+              modelId: selectedModelId,
+              modelLabel: selectedModel?.label,
+              creatorModelId: jobCreatorId,
+              aspect: jobRatio,
+              resolution: jobResolution,
+            });
+            displayUrl = saved.publicUrl;
+          } catch (saveErr) {
+            setError(
+              `Image ready, but Outputs save failed: ${
+                saveErr instanceof Error
+                  ? saveErr.message
+                  : "Outputs save failed"
+              }. Open Content → Outputs after regenerating.`
+            );
+          }
+          setSlots((prev) => {
+            const next = [...prev];
+            if (slotIndex < next.length) {
+              next[slotIndex] = { state: "done", url: displayUrl };
+            }
+            return next;
+          });
+        } catch (err) {
+          const message =
+            err instanceof Error ? err.message : "Generation failed";
+          setError(message);
+          setSlots((prev) => {
+            const next = [...prev];
+            if (slotIndex < next.length) {
+              next[slotIndex] = { state: "error", message };
+            }
+            return next;
+          });
         }
-      }
-      setSlots((prev) =>
-        prev.map((s, i) =>
-          i < displayUrls.length
-            ? { state: "done", url: displayUrls[i] }
-            : s
-        )
-      );
-      if (saveErrors.length) {
-        setError(
-          `Image ready, but Outputs save failed: ${saveErrors[0]}. Open Content → Outputs after regenerating.`
-        );
-      }
+      });
+
+      await Promise.all(tasks);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Generation failed";
       setError(message);
-      setSlots((prev) =>
-        prev.map((s, i) =>
-          i < quantity ? { state: "error", message } : s
-        )
-      );
+      setSlots((prev) => {
+        const next = [...prev];
+        for (const i of claimedIndices) {
+          if (i < next.length && next[i].state === "generating") {
+            next[i] = { state: "error", message };
+          }
+        }
+        return next;
+      });
     } finally {
-      setBusy(false);
+      setActiveJobs((n) => Math.max(0, n - 1));
     }
   }
 
   return (
     <div className="gen-dock-page">
-      <div className="gen-dock-stage">
+      <div
+        className="gen-dock-stage"
+        style={
+          {
+            "--gen-slot-count": Math.max(3, slots.length),
+          } as CSSProperties
+        }
+      >
         {slots.map((slot, i) => (
           <div key={i} className="gen-dock-cell group">
             {slot.state === "generating" ? (
@@ -1092,16 +1164,22 @@ export function GenerateDock({
             </div>
             <button
               type="button"
-              disabled={busy}
               onClick={() => void onGenerate()}
-              className="inline-flex h-10 items-center gap-2 rounded-full bg-primary px-5 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+              title={
+                activeJobs > 0
+                  ? "Start another generation while others finish"
+                  : "Generate"
+              }
+              className="inline-flex h-10 cursor-pointer items-center gap-2 rounded-full bg-primary px-5 text-sm font-semibold text-primary-foreground hover:bg-primary/90"
             >
-              {busy ? (
+              {activeJobs > 0 ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <Sparkles className="h-4 w-4" />
               )}
-              Generate
+              {activeJobs > 0
+                ? `Generate another (${activeJobs} running)`
+                : "Generate"}
             </button>
           </div>
         </div>
