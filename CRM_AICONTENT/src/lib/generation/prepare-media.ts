@@ -3,7 +3,9 @@
 const WAN_STILL_MAX_BYTES = 4.8 * 1024 * 1024; // Wan Animate Move docs: 5MB max
 
 export function motionStillMaxBytes(modelId: string): number | null {
-  if (modelId === "wan-animate-move") return WAN_STILL_MAX_BYTES;
+  if (modelId === "wan-animate-move" || modelId === "wan-animate-replace") {
+    return WAN_STILL_MAX_BYTES;
+  }
   return null;
 }
 

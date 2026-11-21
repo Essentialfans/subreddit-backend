@@ -93,13 +93,17 @@ export async function POST(request: Request) {
     }
 
     // Wan Animate Move hard-caps stills at 5MB — generated PNGs are often larger.
-    if (model.id === "wan-animate-move" && imageUrls[0]) {
+    if (
+      (model.id === "wan-animate-move" ||
+        model.id === "wan-animate-replace") &&
+      imageUrls[0]
+    ) {
       const bytes = await headContentLength(imageUrls[0]);
       if (bytes && bytes > WAN_STILL_MAX) {
         return NextResponse.json(
           {
             ok: false,
-            error: `Wan Animate Move allows stills up to 5MB; this one is ${(
+            error: `Wan Animate allows stills up to 5MB; this one is ${(
               bytes /
               (1024 * 1024)
             ).toFixed(1)}MB. Wait for auto-compress on the client, or re-upload a smaller JPEG.`,

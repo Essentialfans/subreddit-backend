@@ -475,7 +475,31 @@ export const VIDEO_MODELS: KieModel[] = [
     resolutionField: "quality",
   },
   // —— Motion control ——
-  // Note: Wan 3.0 is prompting video only. Wan motion transfer on kie is Animate Move (2.2).
+  // Note: Wan 3.0 is prompting video only. Wan motion transfer on kie is Animate (2.2).
+  {
+    id: "wan-animate-replace",
+    label: "Wan Animate Replace",
+    mode: "video",
+    videoCategory: "motion_control",
+    model: "wan/2-2-animate-replace",
+    imageRefField: "image_url",
+    videoRefField: "video_url",
+    blurb:
+      "Hard character swap: keep the reference reel’s motion/scene, replace the person with your My Model still. Best when Wan 3.0 still copies the reel woman.",
+    aspectOptions: ["9:16", "16:9", "1:1"],
+    defaultAspect: "9:16",
+    omitAspect: true,
+    durations: [],
+    resolutions: ["720p"],
+    defaultResolution: "720p",
+    resolutionField: "resolution",
+    requiresImage: true,
+    requiresMotionVideo: true,
+    promptOptional: true,
+    omitPrompt: true,
+    durationNote:
+      "Output follows the motion-reference video. Image = who appears; video = motion + scene.",
+  },
   {
     id: "wan-animate-move",
     label: "Wan Animate Move",
@@ -668,15 +692,6 @@ export function buildKieInput(options: {
     input.output_format = "png";
   }
 
-  if (
-    def.mode === "video" &&
-    typeof duration === "number" &&
-    duration > 0 &&
-    (def.durations?.length ?? 0) > 0
-  ) {
-    input.duration = def.durationAsString ? String(duration) : duration;
-  }
-
   if (useWanReferences) {
     if (uniqueUrls.length) {
       input.reference_image_urls = uniqueUrls.slice(0, 10);
@@ -687,7 +702,28 @@ export function buildKieInput(options: {
     if (referenceAudios.length) {
       input.reference_audio_urls = referenceAudios;
     }
-  } else if (hasImage && primary && def.id !== "veo-3-1") {
+    // Character-replace / video-edit: let Wan pick duration from Video1
+    // (duration -1). Fixed short durations make it regenerate instead of edit.
+    if (isWan3Family(def.id) && referenceVideos.length > 0) {
+      input.duration = -1;
+    } else if (
+      def.mode === "video" &&
+      typeof duration === "number" &&
+      duration > 0 &&
+      (def.durations?.length ?? 0) > 0
+    ) {
+      input.duration = def.durationAsString ? String(duration) : duration;
+    }
+  } else if (
+    def.mode === "video" &&
+    typeof duration === "number" &&
+    duration > 0 &&
+    (def.durations?.length ?? 0) > 0
+  ) {
+    input.duration = def.durationAsString ? String(duration) : duration;
+  }
+
+  if (!useWanReferences && hasImage && primary && def.id !== "veo-3-1") {
     const field = def.imageRefField ?? "image_url";
     // Motion-control APIs accept exactly one still (input_urls max 1 / image_url).
     // Wan 3.0 single still → first_frame_url (+ optional last_frame_url).

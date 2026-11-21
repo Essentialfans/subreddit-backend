@@ -156,8 +156,43 @@ export function wanGentleVoiceRule(): string {
 }
 
 /**
- * Server-side seal for Wan jobs with @Image + @Video.
- * Runs on the API so a weak client prompt cannot copy the reel's woman.
+ * Bind a free-form recreate narrative so every action is performed by Image1.
+ * Wan only honors image/video roles when the prompt names them in the action text
+ * (official pattern: "replace the person in Video1 with Image1").
+ */
+export function bindWanNarrativeToImage1(
+  prompt: string,
+  modelName?: string | null
+): string {
+  const name = modelName?.trim() || "My Model";
+  const subject = `Image1 (${name})`;
+  let text = prompt.trim();
+  if (!text) return text;
+
+  // Already heavily Image1-bound — keep user wording.
+  const image1Hits = (text.match(/\bImage\s*1\b/gi) ?? []).length;
+  if (image1Hits >= 3) return text;
+
+  // Strip weak generic subject openers so we can re-anchor on Image1.
+  text = text
+    .replace(
+      /\b(a|the|this)\s+(beautiful\s+|young\s+|sexy\s+|attractive\s+)?(woman|girl|lady|female|model|presenter|subject)\b/gi,
+      subject
+    )
+    .replace(/@Image1\b/gi, "Image1")
+    .replace(/@Video1\b/gi, "Video1")
+    .replace(/@Audio1\b/gi, "Audio1");
+
+  if (!/\bImage\s*1\b/i.test(text)) {
+    text = `${subject} performs the following exactly: ${text}`;
+  }
+  return text;
+}
+
+/**
+ * Server-side seal for Wan jobs with Image + Video.
+ * Uses Alibaba/Kie "edit video / replace character" intent so Wan does not
+ * regenerate the reel's woman from Video1.
  */
 export function sealWanReferencePromptForApi(options: {
   prompt: string;
@@ -167,27 +202,35 @@ export function sealWanReferencePromptForApi(options: {
   videoCount: number;
   audioCount?: number;
 }): string {
-  const base = options.prompt.trim();
+  const name = options.modelName?.trim() || "My Model";
+  const bound = bindWanNarrativeToImage1(options.prompt, options.modelName);
+  // Strip a prior client seal if present so we don't stack three walls of text
+  // that bury the actual replace instruction.
+  const body = bound
+    .replace(/^REFERENCE SPLIT[\s\S]*?(?=\n\n|$)/i, "")
+    .replace(/^EDIT VIDEO[\s\S]*?(?=\n\n|$)/i, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
   const seal = wanImageVideoRefSeal({
     modelName: options.modelName,
     aspect: options.aspect,
     imageCount: Math.max(1, options.imageCount),
     videoCount: options.videoCount,
     audioCount: options.audioCount ?? 0,
-    prompt: base,
+    prompt: body,
   });
-  // Put seal first AND repeat the identity ban at the end so Enhance/weak
-  // prompts cannot bury it.
   const tail =
-    `FINAL LOCK: The only person on screen is from @Image1 (My Model). ` +
-    `@Video1 is motion guidance only — do NOT show or recreate the woman from @Video1. ` +
-    `Output MUST be ${options.aspect}.`;
-  return `${seal}\n\n${base}\n\n${tail}`;
+    `FINAL LOCK: Seamlessly replace every person in Video1 with Image1 (${name}). ` +
+    `The only face/body/hair on screen is Image1 (${name}). ` +
+    `Video1 supplies motion/choreography/camera timing only — never Video1's identity. ` +
+    `Output aspect ${options.aspect}.`;
+  return `${seal}\n\n${body}\n\n${tail}`;
 }
 
 /**
  * Wan 3.0 reference_image_urls + reference_video_urls (+ optional audio) mode.
- * Image = who appears. Video = motion only. Audio = voice.
+ * Official intent: EDIT Video1 — replace its person with Image1. Motion from Video1.
  */
 export function wanImageVideoRefSeal(options: {
   modelName?: string | null;
@@ -199,37 +242,25 @@ export function wanImageVideoRefSeal(options: {
 }): string {
   const name = options.modelName?.trim() || "My Model";
   const audioCount = options.audioCount ?? 0;
-  const imgTag =
+  const extraImages =
     options.imageCount > 1
-      ? `@Image1…@Image${options.imageCount}`
-      : "@Image1";
+      ? ` Image2…Image${options.imageCount} are extra angles of the SAME person (${name}) — reinforce identity only.`
+      : "";
   const lines = [
-    `REFERENCE SPLIT (CRITICAL):`,
-    `${imgTag} = identity + face + body + hair for ${name} ONLY. Match the person in those images.`,
+    `EDIT VIDEO (CRITICAL — character replacement):`,
+    `Seamlessly replace the female/male character in Video1 with the character from Image1 (${name}).`,
+    `Image1 = the ONLY identity for ${name}: face, hair, skin, age, body proportions.${extraImages}`,
+    `Video1 = motion / choreography / timing / body language / camera moves ONLY.`,
+    `Do NOT keep, blend, or recreate the face, hair, body, skin, age, or identity of anyone visible in Video1.`,
+    `Match Video1's moves as closely as the written beats allow (including back-to-camera wardrobe beats).`,
+    `Follow the timestamped beats in the prompt; Image1 (${name}) is the subject of every beat.`,
+    `Output aspect ratio MUST be ${options.aspect}. Do not inherit Video1's wrong crop/zoom/landscape framing.`,
   ];
-  if (options.videoCount > 0) {
-    const vidTag =
-      options.videoCount > 1
-        ? `@Video1…@Video${options.videoCount}`
-        : "@Video1";
-    lines.push(
-      `${vidTag} = motion / choreography / timing / body language ONLY — match her moves as closely as the prompt allows.`,
-      `NEVER copy the face, hair, body type, skin, age, or identity of anyone visible in ${vidTag}.`,
-      `If ${vidTag} shows a different woman, ignore her appearance completely — only reuse how she moves.`,
-      `Follow the written timestamped beats; use ${vidTag} to make that motion accurate (including back-to-camera bra/prop beats).`,
-      `Output aspect ratio MUST be ${options.aspect} (vertical story if 9:16). Do not inherit ${vidTag}'s crop, zoom, or landscape framing.`
-    );
-  } else {
-    lines.push(
-      `Output aspect ratio MUST be ${options.aspect} (vertical story if 9:16).`
-    );
-  }
   if (audioCount > 0) {
     lines.push(
-      `@Audio1 = preferred speaking voice sample from the source reel. Use it for timbre/delivery of the written dialogue; keep speech fully human — never replace it with robotic TTS.`
+      `Audio1 = preferred speaking voice sample. Use it for timbre/delivery of the written dialogue; keep speech fully human — never robotic TTS.`
     );
   }
-  // Always seal natural human speech (gender-aware) — even with @Audio1.
   lines.push(
     wanNaturalSpeechRule({
       prompt: options.prompt,

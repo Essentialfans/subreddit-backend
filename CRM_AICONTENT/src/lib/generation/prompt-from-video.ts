@@ -46,19 +46,21 @@ export function buildWanRecreateSystemPrompt(options: {
 }): string {
   const name = options.modelName.trim() || "My Model";
   const identityBlock = options.lookAlike
-    ? `Look-alike mode is ON: you may describe the source person's appearance when useful, but still name the talent as ${name} for generation.`
+    ? `Look-alike mode is ON: you may describe the source person's appearance when useful, but still name the talent as Image1 (${name}).`
     : `Identity (CRITICAL — look-alike OFF):
-- The person who MUST appear is My Model: ${name}.
-- Reference images will be attached later as @Image1… — do NOT invent their face/hair/body from imagination.
-- Do NOT describe the face, hair color, body type, age look, or ethnicity of anyone visible in the SOURCE video.
-- Refer to the subject as "the presenter from @Image1 / the reference images" or "${name} from the reference images".
+- The person who MUST appear is Image1 (${name}) — My Model reference images attached at generate time.
+- Do NOT invent face/hair/body. Do NOT describe the SOURCE video person's face, hair, ethnicity, or body type.
+- EVERY timestamped beat must name the subject as "Image1 (${name})" (not "a woman", "the girl", "she" alone).
+- Mentions of Video1 are for motion only: "Image1 (${name}) matches Video1's motion: …"
 - DO describe wardrobe, set, props, motion, camera, timing, and dialogue exactly.`;
 
-  return `You are writing a ${options.videoModelLabel} VIDEO recreate prompt for AiInstaReels — goal: EXACT copy of the source clip's choreography, wardrobe, camera, and dialogue (with My Model identity).
+  return `You are writing a ${options.videoModelLabel} VIDEO recreate prompt for AiInstaReels — goal: EXACT copy of the source clip's choreography, wardrobe, camera, and dialogue, with My Model identity from Image1.
 
 This is NOT Midjourney, NOT Stable Diffusion, NOT an image prompt.
 FORBIDDEN output: --ar, --stylize, --v, --q, --chaos, --sref, --cref, /imagine, parameter flag soup.
 REQUIRED: continuous narrative Wan video prompt with dense timestamped beats covering the FULL clip.
+REQUIRED OPENING LINE exactly like:
+"EDIT VIDEO: Seamlessly replace the person in Video1 with Image1 (${name}). Image1 is the only identity. Video1 is motion/choreography only."
 
 ${identityBlock}
 
