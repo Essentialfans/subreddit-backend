@@ -4,8 +4,13 @@ import { videoNoTextRule } from "@/lib/generation/prompt-recipes";
 
 export const VIDEO_RECREATE_RECIPE_ID = "wan-recreate-identity";
 
+/** Beats that MUST survive inventory → final prompt (never soft-censored). */
 const EXPOSURE_RE =
-  /\b(bare|butt|buttock|ass|cheek|lift|pulled\s*up|hike|slit\s*open|expos|flash|nude|naked|no\s*panty|without\s*pant|underwear|thong|breast|nipple|crotch|side\s*angle)\b/i;
+  /\b(bare|butt|buttock|ass|cheek|lift|pulled\s*up|hike|slit\s*open|expos|flash|nude|naked|no\s*panty|without\s*pant|underwear|thong|panty|panties|breast|nipple|crotch|side\s*angle|bra|bralette|lingerie|strap|straps|unhook|unclasp|clasp|underwire|braless|topless|cup|cups|cleavage|take[s]?\s+off|remov(?:e|es|ing|ed)|pull(?:s|ing|ed)?\s+(?:down|off|aside))\b/i;
+
+/** Concrete garment words we refuse to drop from inventory → prompt. */
+const WARDROBE_TERM_RE =
+  /\b(bra|bralette|lingerie|corset|bustier|dress|gown|skirt|top|blouse|shirt|tee|t-shirt|crop\s*top|hoodie|jacket|coat|sweater|cardigan|jeans|pants|trousers|shorts|leggings|pantyhose|stockings|tights|panty|panties|thong|underwear|briefs|bikini|swimsuit|robe|towel|heels|sneakers|boots|sandals|socks|gloves|hat|scarf|belt|zipper|lace|satin|silk|cotton|leather|mesh|sheer|strapless|halter|off[- ]shoulder)\b/gi;
 
 /** Frames per inventory vision call. Larger = fewer round-trips. */
 const INVENTORY_BATCH = 8;
@@ -24,16 +29,22 @@ function formatMmSs(sec: number): string {
 }
 
 export function buildInventorySystemPrompt(): string {
-  return `You inventory source-video keyframes for a Wan recreate pipeline that must EXACTLY copy the clip's action.
+  return `You inventory source-video keyframes for a Wan recreate pipeline that must EXACTLY copy the clip's action — adult / lingerie / undress content is allowed and REQUIRED when visible.
 
 For EACH attached image, output exactly one line:
-FRAME n @ mm:ss | wardrobe: … | exposure: none OR describe exactly (e.g. "black dress pulled up at side slit, bare left buttock visible from side") | pose/motion: … | set: …
+FRAME n @ mm:ss | wardrobe: outer=…; under=…; shoes=… | exposure: none OR describe exactly | pose/motion: … | set: …
+
+wardrobe field (MANDATORY — never vague):
+- outer = every visible outer garment with color + cut (dress, top, skirt, jacket…).
+- under = every visible undergarment with color + style (bra, bralette, straps, cups, clasp, panties, thong, lingerie) OR "none visible".
+- If a bra/lingerie is on screen, you MUST write the word "bra" (or bralette/lingerie) in wardrobe — never hide it as "top" or "underwear" alone.
+- If she is removing / unhooking / pulling off a bra or other garment, put that action in pose/motion AND exposure.
 
 Rules:
-- Cover what is literally visible in THAT frame — do not skip or soften.
-- Do NOT soft-censor. If skin/buttocks/breasts/clothing lift is visible, say so plainly.
-- Do NOT describe face, hair color, ethnicity, or body type (identity comes from My Model later).
-- Wardrobe fabric/color/cut/slits/lace-ups matter.
+- Cover what is literally visible in THAT frame — do not skip, soften, or moralize.
+- Do NOT soft-censor. Bra, breasts, buttocks, lingerie, nudity, clothing removal — say the real words.
+- Do NOT describe face, hair color, ethnicity, or body type (identity comes from the reference still later).
+- Wardrobe fabric/color/cut/straps/clasps/slits/lace-ups matter.
 - IGNORE burned-in captions / meme overlays / \"Wait for it…\" / subtitles / stickers / watermarks — never copy that text into wardrobe or set. If present, write overlay_text: ignore.
 - Use the FRAME numbers and timestamps given in the user message (do not renumber from 1 unless told).
 - No Midjourney flags. No preamble. Only FRAME lines.`;
@@ -54,9 +65,10 @@ export function buildWanRecreateSystemPrompt(options: {
 - Mentions of Video1 are for motion only: "Image1 (${name}) matches Video1's motion: …"
 - DO describe wardrobe, set, props, motion, camera, timing, and dialogue exactly.`;
 
-  return `You are writing a ${options.videoModelLabel} VIDEO recreate prompt for AiInstaReels — goal: EXACT copy of the source clip's choreography, wardrobe, camera, and dialogue, with My Model identity from Image1.
+  return `You are writing a ${options.videoModelLabel} VIDEO recreate prompt for AiInstaReels — goal: 100% faithful copy of the source clip's choreography, wardrobe (including undergarments), camera, and dialogue, with identity from Image1.
 
 This is NOT Midjourney, NOT Stable Diffusion, NOT an image prompt.
+Adult / lingerie / bra / undress content is allowed — NEVER censor, soften, or skip garments or actions that appear in the inventory.
 FORBIDDEN output: --ar, --stylize, --v, --q, --chaos, --sref, --cref, /imagine, parameter flag soup.
 REQUIRED: continuous narrative Wan video prompt with dense timestamped beats covering the FULL clip.
 REQUIRED OPENING LINE exactly like:
@@ -68,12 +80,15 @@ Dialogue:
 - Lock dialogue VERBATIM from the provided transcript.
 - Prefer the ASR transcript over lip-reading guesses.
 
-Full-timeline inventory (CRITICAL):
+Full-timeline inventory (CRITICAL — source of truth):
 - You receive a dense KEYFRAME INVENTORY spanning the whole video.
 - Turn it into continuous timestamped beats — do not jump over sections.
+- Overall setup MUST list every garment from the inventory wardrobe fields (outer + under + shoes), using the real words (bra, straps, panties, dress, etc.).
+- If inventory mentions a bra / bralette / lingerie, the prompt MUST say "bra" (or that exact garment) in the setup AND in every beat while it is still on / being removed.
 - Every FRAME line whose exposure is NOT "none" MUST appear as an explicit beat.
-- Do not euphemize ("adjusts dress"). If inventory says bare buttock / dress pulled up / slit open — write that.
-- Wardrobe always follows the inventory/source frames, never My Model clothes.
+- Every clothing-change beat (put on / take off / unhook / pull down / lift) MUST appear with a timestamp.
+- Do not euphemize ("adjusts top", "removes lingerie"). If inventory says bra / bare buttock / dress pulled up — write those exact words.
+- Wardrobe always follows the inventory/source frames, never My Model library clothes.
 
 NO on-screen text (CRITICAL — product rule):
 - NEVER write or recreate burned-in captions, meme overlays, \"Wait for it…\", subtitles, stickers, or watermarks from the source.
@@ -81,8 +96,8 @@ NO on-screen text (CRITICAL — product rule):
 - Always end negatives with: no captions, no subtitles, no watermark, no text overlays, no meme text.
 
 Output (one paste-ready prompt only — no markdown fences, no commentary):
-1) Overall setup (set, wardrobe, camera, aspect, duration) — no overlay text
-2) Dense timestamped beats (mm:ss) covering start → every action change → end
+1) Overall setup (set, FULL wardrobe including undergarments, camera, aspect, duration) — no overlay text
+2) Dense timestamped beats (mm:ss) covering start → every action/wardrobe change → end
 3) Verbatim dialogue tied to timing when possible (audio only)
 4) Voice: real human speech matching the speaker (woman/man as described) — warm, natural, never robotic/squeaky/TTS
 5) Short negatives including no captions / no on-screen text`;
@@ -113,13 +128,14 @@ export function buildWanRecreateUserMessage(options: {
       ? `Dense timeline: ${frameCount} inventoried frames spanning the full clip.`
       : "",
     "",
-    "KEYFRAME INVENTORY (full-clip source of truth — recreate EVERY beat, do not skip exposure lines):",
+    "KEYFRAME INVENTORY (full-clip source of truth — recreate EVERY beat + EVERY garment, do not skip bra/lingerie/exposure lines):",
     options.inventory.trim() || "(empty)",
     "",
     "ASR TRANSCRIPT (verbatim — lock into the prompt):",
     options.transcript.trim() || "(no speech detected)",
     "",
-    "Write the paste-ready Wan recreate NARRATIVE prompt now — exact choreography of the full video.",
+    "Write the paste-ready Wan recreate NARRATIVE prompt now — 100% exact choreography + wardrobe of the full video.",
+    "If a bra/lingerie/undergarment appears in any FRAME wardrobe line, it MUST appear in your setup and beats — never omit or euphemize.",
     "Do NOT include any on-screen captions or overlay text from the source frames.",
   ]
     .filter(Boolean)
@@ -159,6 +175,8 @@ export function inventoryHasExposure(inventory: string): boolean {
   return lines.some((line) => {
     const exp = /exposure:\s*(.+?)(?:\s*\|\s*(?:pose\/)?motion:|$)/i.exec(line);
     const val = (exp?.[1] ?? "").trim();
+    // Also treat wardrobe/pose mentions of bra/removal as critical even if exposure says none.
+    if (EXPOSURE_RE.test(line)) return true;
     if (!val || /^none\b/i.test(val)) return false;
     return EXPOSURE_RE.test(val);
   });
@@ -167,6 +185,58 @@ export function inventoryHasExposure(inventory: string): boolean {
 export function promptCoversExposure(prompt: string, inventory: string): boolean {
   if (!inventoryHasExposure(inventory)) return true;
   return EXPOSURE_RE.test(prompt);
+}
+
+/** Pull concrete garment words from inventory wardrobe fields. */
+export function extractWardrobeTerms(inventory: string): string[] {
+  const terms = new Set<string>();
+  for (const line of inventory.split("\n")) {
+    if (!/^FRAME\s+\d+/i.test(line) && !/wardrobe:/i.test(line)) continue;
+    const wardrobe =
+      /wardrobe:\s*(.+?)(?:\s*\|\s*(?:exposure|pose\/?motion|set):|$)/i.exec(
+        line
+      )?.[1] ?? line;
+    const matches = wardrobe.match(WARDROBE_TERM_RE) ?? [];
+    for (const m of matches) {
+      terms.add(m.toLowerCase().replace(/\s+/g, " ").trim());
+    }
+  }
+  return [...terms];
+}
+
+/**
+ * Prompt must retain inventory garments (especially bra/lingerie).
+ * Missing even one critical undergarment term = fail.
+ */
+export function promptCoversWardrobe(
+  prompt: string,
+  inventory: string
+): boolean {
+  const terms = extractWardrobeTerms(inventory);
+  if (!terms.length) return true;
+  const lower = prompt.toLowerCase();
+  const critical = terms.filter((t) =>
+    /\b(bra|bralette|lingerie|thong|panty|panties|underwear|bikini|corset|bustier)\b/i.test(
+      t
+    )
+  );
+  const mustHave = critical.length ? critical : terms.slice(0, 6);
+  return mustHave.every((t) => lower.includes(t));
+}
+
+export function missingWardrobeTerms(
+  prompt: string,
+  inventory: string
+): string[] {
+  const terms = extractWardrobeTerms(inventory);
+  const lower = prompt.toLowerCase();
+  const critical = terms.filter((t) =>
+    /\b(bra|bralette|lingerie|thong|panty|panties|underwear|bikini|corset|bustier)\b/i.test(
+      t
+    )
+  );
+  const mustHave = critical.length ? critical : terms.slice(0, 6);
+  return mustHave.filter((t) => !lower.includes(t));
 }
 
 function renumberFrameLines(
@@ -229,7 +299,8 @@ async function inventoryKeyframesBatched(options: {
 
 ${mapping}
 
-Output one FRAME line per image using the GLOBAL frame numbers and timestamps above. Be explicit about clothing lifts / bare skin / pose changes.`,
+Output one FRAME line per image using the GLOBAL frame numbers and timestamps above.
+Be explicit about EVERY garment (outer + under — bra/straps/lingerie by name), clothing lifts, removals, bare skin, and pose changes. Never soft-censor.`,
         imageUrls: batchUrls,
       });
 
@@ -391,20 +462,52 @@ PREVIOUS ATTEMPT WAS INVALID (Midjourney/image flags). Rewrite as a full narrati
     }
   }
 
-  if (!promptCoversExposure(prompt, inventory)) {
+  const needsExposureFix = !promptCoversExposure(prompt, inventory);
+  const missingClothes = missingWardrobeTerms(prompt, inventory);
+  if (needsExposureFix || missingClothes.length > 0) {
+    const exposureLines = inventory
+      .split("\n")
+      .filter((l) => EXPOSURE_RE.test(l))
+      .join("\n");
     prompt = await runPromptLlm({
       llm: options.llm,
       apiKey: options.apiKey,
       system,
       userText: `${userText}
 
-CRITICAL REWRITE: Your previous prompt omitted attention-grab exposure beat(s) already in the inventory:
-${inventory
-  .split("\n")
-  .filter((l) => EXPOSURE_RE.test(l) && !/exposure:\s*none/i.test(l))
-  .join("\n")}
+CRITICAL REWRITE — previous prompt was incomplete / soft-censored:
+${
+  missingClothes.length
+    ? `- Missing wardrobe words that ARE in the inventory: ${missingClothes.join(", ")}`
+    : ""
+}
+${
+  needsExposureFix
+    ? `- Omitted exposure / undress / bra beats from inventory:\n${exposureLines}`
+    : ""
+}
 
-Rewrite the FULL Wan prompt covering the entire clip and INCLUDE those beats with timestamps. Do not euphemize.`,
+Rewrite the FULL Wan prompt covering the entire clip.
+- Setup MUST name every inventory garment (use the real words: bra, straps, panties, dress, etc.).
+- INCLUDE every undress / exposure / clothing-change beat with timestamps.
+- Do not euphemize or skip lingerie.`,
+      imageUrls: visionUrls,
+    });
+  }
+
+  // Second pass if bra/lingerie still missing after rewrite.
+  const stillMissing = missingWardrobeTerms(prompt, inventory);
+  if (stillMissing.length > 0 || !promptCoversExposure(prompt, inventory)) {
+    prompt = await runPromptLlm({
+      llm: options.llm,
+      apiKey: options.apiKey,
+      system,
+      userText: `${userText}
+
+FINAL HARD REWRITE: Still missing: ${
+        stillMissing.join(", ") || "exposure/undress beats"
+      }.
+Paste a complete Wan narrative that keeps ALL inventory wardrobe words and undress beats. No softening.`,
       imageUrls: visionUrls,
     });
   }
@@ -418,6 +521,6 @@ Rewrite the FULL Wan prompt covering the entire clip and INCLUDE those beats wit
     frameCount: options.keyframeUrls.length,
     note: options.lookAlike
       ? "Look-alike on — review face/hair wording before generate. No on-screen captions."
-      : `Full-clip inventory (${options.keyframeUrls.length} frames). Identity stripped; no on-screen captions; attach My Model refs in Video studio.`,
+      : `Full-clip inventory (${options.keyframeUrls.length} frames). Uncensored wardrobe; no on-screen captions; attach reference still in Video studio.`,
   };
 }
