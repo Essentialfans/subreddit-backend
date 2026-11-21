@@ -114,9 +114,9 @@ export function PromptFromVideoPanel({
     setPrepareStatus("Capturing full-timeline frames…");
     try {
       const extractPromise = extractKeyframesFromVideoFile(file, {
-        // ~every 0.45s, capped at 24 — dense enough for beat copy, far fewer LLM rounds
-        intervalSec: 0.45,
-        maxFrames: 24,
+        // ~every 0.35s, up to 36 — denser so brief bra/undress beats are not skipped
+        intervalSec: 0.35,
+        maxFrames: 36,
         onProgress: (done, total) => {
           setPrepareStatus(`Capturing frames ${done}/${total}…`);
         },
@@ -364,7 +364,7 @@ export function PromptFromVideoPanel({
             {durationSec ? (
               <p className="text-xs text-muted-foreground">
                 Duration ~{durationSec.toFixed(1)}s · {keyframeUrls.length}{" "}
-                full-timeline frames (~every 0.45s)
+                full-timeline frames (~every 0.35s)
               </p>
             ) : null}
             {keyframeUrls.length ? (
