@@ -655,13 +655,15 @@ export function GenerateDock({
                   </button>
                 ))}
               </div>
-              <p className="max-w-[220px] text-[10px] leading-snug text-muted-foreground">
-                Body always from My Model. Clothing picks outfit only
+              <p className="max-w-[240px] text-[10px] leading-snug text-muted-foreground">
+                Body always from My Model (never the source woman). Clothing
+                picks outfit only
                 {clothing === "source"
                   ? " (keep source outfit on model body)."
                   : clothing === "external"
                     ? " (upload outfit ref)."
-                    : " (use model’s usual look)."}
+                    : " (use model’s usual look)."}{" "}
+                Captions/text on the source are removed in the output.
               </p>
             </div>
           ) : null}
