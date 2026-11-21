@@ -34,7 +34,7 @@ import { uploadGenerationFile } from "@/lib/generation/upload-client";
 import { ensureStillFitsModel } from "@/lib/generation/prepare-media";
 import {
   videoNoTextRule,
-  wanGentleVoiceRule,
+  wanNaturalSpeechRule,
   wanImageVideoRefSeal,
 } from "@/lib/generation/prompt-recipes";
 import { saveOutputToGallery } from "@/lib/outputs/client";
@@ -517,6 +517,7 @@ export function VideoDock({
             imageCount: imageUrls.length,
             videoCount: jobReferenceVideoUrls.length,
             audioCount: jobReferenceAudioUrls.length,
+            prompt: finalPrompt,
           }),
           finalPrompt,
           videoNoTextRule(finalPrompt),
@@ -529,15 +530,18 @@ export function VideoDock({
           `Do NOT change clothes, identity, or restyle the subject unless the user prompt explicitly asks for it.`,
           `Do NOT keep or recreate burned-in captions, meme text, subtitles, stickers, or watermarks from the starting frame — clean video, no on-screen text.`,
           `Only add motion / camera as described. Output aspect ratio ${jobRatio}.`,
-          wanGentleVoiceRule(),
+          wanNaturalSpeechRule({
+            prompt: finalPrompt,
+            modelName: jobCreator?.name,
+          }),
           finalPrompt,
           videoNoTextRule(finalPrompt),
         ].join(" ");
       } else if (acceptsPrompt && jobCreator?.name) {
         // No starting frame — My Model can guide appearance.
-        finalPrompt = `${finalPrompt} Featuring ${jobCreator.name}, matching My Models reference identity. ${wanGentleVoiceRule()} ${videoNoTextRule(finalPrompt)}`;
+        finalPrompt = `${finalPrompt} Featuring ${jobCreator.name}, matching My Models reference identity. ${wanNaturalSpeechRule({ prompt: finalPrompt, modelName: jobCreator.name })} ${videoNoTextRule(finalPrompt)}`;
       } else if (acceptsPrompt) {
-        finalPrompt = `${finalPrompt} ${wanGentleVoiceRule()} ${videoNoTextRule(finalPrompt)}`;
+        finalPrompt = `${finalPrompt} ${wanNaturalSpeechRule({ prompt: finalPrompt })} ${videoNoTextRule(finalPrompt)}`;
       }
 
       const createRes = await fetch("/api/generation/create", {
@@ -1261,8 +1265,9 @@ export function VideoDock({
                     />
                   ) : (
                     <span className="text-xs text-muted-foreground">
-                      @Audio1 = gentle natural voice from the reel (or your
-                      MP3). Stops robotic TTS.
+                      Best: voice from the reel (same lines). A random MP3 of
+                      unrelated words is only a weak timbre hint — not a full
+                      clone.
                     </span>
                   )}
                 </div>

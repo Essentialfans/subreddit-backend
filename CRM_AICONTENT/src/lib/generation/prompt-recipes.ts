@@ -88,9 +88,71 @@ export function videoNoTextRule(userText?: string): string {
   return "NO burned-in captions, meme text, subtitles, stickers, logos, or watermarks on the video. Do not recreate source overlay text like \"Wait for it…\". Clean plate — spoken dialogue is audio only, never on-screen text.";
 }
 
-/** Default spoken delivery when no @Audio1 is attached. */
+export type WanSpeechGender = "feminine" | "masculine" | "neutral";
+
+/** Infer speaker gender from prompt + model name for natural speech seals. */
+export function inferWanSpeechGender(options: {
+  prompt?: string | null;
+  modelName?: string | null;
+}): WanSpeechGender {
+  const text = `${options.modelName ?? ""} ${options.prompt ?? ""}`.toLowerCase();
+  const masc =
+    /\b(he|him|his|man|male|guy|gentleman|boyfriend|husband|king|mr\.?)\b/.test(
+      text
+    );
+  const fem =
+    /\b(she|her|hers|woman|female|girl|lady|girlfriend|wife|queen|miss|mrs\.?|ms\.?)\b/.test(
+      text
+    );
+  if (masc && !fem) return "masculine";
+  if (fem && !masc) return "feminine";
+  // Product default: most My Models are women; still avoid robotic either way.
+  if (masc && fem) return "neutral";
+  return "feminine";
+}
+
+/**
+ * Hard ban on squeaky/robotic TTS. Gender follows who is speaking.
+ * A random unrelated voice MP3 is NOT a reliable clone for new lines —
+ * this rule is the always-on quality floor for prompted speech.
+ */
+export function wanNaturalSpeechRule(options?: {
+  gender?: WanSpeechGender;
+  prompt?: string | null;
+  modelName?: string | null;
+  hasAudioRef?: boolean;
+}): string {
+  const gender =
+    options?.gender ??
+    inferWanSpeechGender({
+      prompt: options?.prompt,
+      modelName: options?.modelName,
+    });
+  const who =
+    gender === "masculine"
+      ? "a real adult man"
+      : gender === "neutral"
+        ? "a real adult human"
+        : "a real adult woman";
+  const tone =
+    gender === "masculine"
+      ? "warm natural masculine speaking voice, calm and clear"
+      : gender === "neutral"
+        ? "warm natural speaking voice, calm and clear"
+        : "gentle soft natural feminine speaking voice, warm and calm";
+  const audioBit = options?.hasAudioRef
+    ? " Prefer the timbre/delivery of @Audio1 when present, but still keep speech fully human."
+    : "";
+  return [
+    `VOICE (CRITICAL): spoken lines must sound like ${who} — ${tone}, close-mic studio presence, natural breath and pacing.`,
+    `FORBIDDEN: robotic TTS, squeaky voice, chipmunk, metallic, high-pitched synthetic, cartoon, vocoder, over-processed AI speech.`,
+    `Dialogue is audio only (no on-screen text).${audioBit}`,
+  ].join(" ");
+}
+
+/** @deprecated use wanNaturalSpeechRule */
 export function wanGentleVoiceRule(): string {
-  return "VOICE: gentle soft natural feminine speaking voice, warm and calm, clear close-mic studio presence — never robotic, never squeaky, never high-pitched TTS, never chipmunk or synthetic.";
+  return wanNaturalSpeechRule({ gender: "feminine" });
 }
 
 /**
@@ -103,6 +165,7 @@ export function wanImageVideoRefSeal(options: {
   imageCount: number;
   videoCount: number;
   audioCount?: number;
+  prompt?: string | null;
 }): string {
   const name = options.modelName?.trim() || "My Model";
   const audioCount = options.audioCount ?? 0;
@@ -133,11 +196,17 @@ export function wanImageVideoRefSeal(options: {
   }
   if (audioCount > 0) {
     lines.push(
-      `@Audio1 = speaking voice / delivery ONLY. Match that voice for all dialogue — gentle natural tone from the reference, never invent a robotic TTS voice.`
+      `@Audio1 = preferred speaking voice sample from the source reel. Use it for timbre/delivery of the written dialogue; keep speech fully human — never replace it with robotic TTS.`
     );
-  } else {
-    lines.push(wanGentleVoiceRule());
   }
+  // Always seal natural human speech (gender-aware) — even with @Audio1.
+  lines.push(
+    wanNaturalSpeechRule({
+      prompt: options.prompt,
+      modelName: options.modelName,
+      hasAudioRef: audioCount > 0,
+    })
+  );
   lines.push(
     `Full-body framing as the prompt describes — do not zoom into feet/legs unless a beat says so.`
   );

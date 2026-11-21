@@ -82,7 +82,7 @@ Output (one paste-ready prompt only — no markdown fences, no commentary):
 1) Overall setup (set, wardrobe, camera, aspect, duration) — no overlay text
 2) Dense timestamped beats (mm:ss) covering start → every action change → end
 3) Verbatim dialogue tied to timing when possible (audio only)
-4) Voice: gentle soft natural feminine speaking voice, warm and calm — never robotic, squeaky, or TTS
+4) Voice: real human speech matching the speaker (woman/man as described) — warm, natural, never robotic/squeaky/TTS
 5) Short negatives including no captions / no on-screen text`;
 }
 
