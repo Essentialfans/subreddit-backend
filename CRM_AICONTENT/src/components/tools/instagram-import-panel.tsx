@@ -6,13 +6,18 @@ import {
   ArrowRight,
   Clapperboard,
   Download,
+  ExternalLink,
   Loader2,
   Link2,
+  Upload,
 } from "lucide-react";
+import { uploadGenerationFile } from "@/lib/generation/upload-client";
 
 export function InstagramImportPanel() {
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadPct, setUploadPct] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [result, setResult] = useState<{
     shortcode: string;
@@ -22,6 +27,10 @@ export function InstagramImportPanel() {
     mediaType: string | null;
     note: string;
   } | null>(null);
+
+  const fastdlHref = url.trim()
+    ? `https://fastdl.app/en#url=${encodeURIComponent(url.trim())}`
+    : "https://fastdl.app/en";
 
   async function onImport() {
     setError("");
@@ -69,12 +78,37 @@ export function InstagramImportPanel() {
     }
   }
 
+  async function onUploadMp4(file: File) {
+    setError("");
+    setResult(null);
+    setUploading(true);
+    setUploadPct(0);
+    try {
+      const hosted = await uploadGenerationFile(file, setUploadPct);
+      setResult({
+        shortcode: file.name.replace(/\.[^.]+$/, "") || "upload",
+        thumbnail: null,
+        downloadUrl: hosted,
+        hostedUrl: hosted,
+        mediaType: "video",
+        note: "Uploaded MP4 ready — send it into Prompt from video.",
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setUploading(false);
+      setUploadPct(null);
+    }
+  }
+
   const promptHref =
     result?.hostedUrl || result?.downloadUrl
       ? `/video/prompt-from-clip?source=${encodeURIComponent(
           (result.hostedUrl || result.downloadUrl)!
         )}`
       : null;
+
+  const showWorkaround = Boolean(error);
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 p-6">
@@ -83,9 +117,9 @@ export function InstagramImportPanel() {
           Instagram Reel import
         </h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          Paste a public Instagram Reel or post link — same flow as fastdl-style
-          downloaders. We fetch the MP4, store it in your workspace, then you can
-          send it straight into Prompt from video.
+          Paste a public Instagram Reel or post link. We try several downloaders,
+          then store the MP4 in your workspace so you can send it into Prompt from
+          video.
         </p>
       </div>
 
@@ -104,12 +138,12 @@ export function InstagramImportPanel() {
               }}
               placeholder="https://www.instagram.com/reel/…"
               className="h-11 w-full rounded-full border border-border bg-background pl-10 pr-4 text-sm outline-none focus:border-primary"
-              disabled={busy}
+              disabled={busy || uploading}
             />
           </div>
           <button
             type="button"
-            disabled={busy}
+            disabled={busy || uploading}
             onClick={() => void onImport()}
             className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-primary px-6 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
           >
@@ -122,7 +156,7 @@ export function InstagramImportPanel() {
           </button>
           <button
             type="button"
-            disabled={busy || !url}
+            disabled={busy || uploading || !url}
             onClick={() => {
               setUrl("");
               setResult(null);
@@ -133,8 +167,90 @@ export function InstagramImportPanel() {
             Clear
           </button>
         </div>
-        {error ? <p className="mt-3 text-sm text-accent-red">{error}</p> : null}
+        {error ? (
+          <p className="mt-3 text-sm text-accent-red whitespace-pre-wrap break-words">
+            {error}
+          </p>
+        ) : null}
       </div>
+
+      {showWorkaround ? (
+        <div className="rounded-2xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm">
+          <p className="font-medium text-foreground">
+            Instagram is blocking automatic downloaders
+          </p>
+          <p className="mt-1 text-muted-foreground">
+            No extra AiInstaReels setting is missing for the basic flow — IG is
+            rejecting anonymous server fetches. Use one of these workarounds:
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <a
+              href={fastdlHref}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-4 py-2 text-xs font-semibold hover:bg-muted"
+            >
+              Open FastDL
+              <ExternalLink className="h-3.5 w-3.5" />
+            </a>
+            <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-full bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground hover:bg-primary/90">
+              {uploading ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Upload className="h-3.5 w-3.5" />
+              )}
+              {uploading
+                ? `Uploading${uploadPct != null ? ` ${uploadPct}%` : "…"}`
+                : "Upload MP4 here"}
+              <input
+                type="file"
+                accept="video/mp4,video/*,.mp4"
+                className="hidden"
+                disabled={uploading || busy}
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) void onUploadMp4(f);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+          </div>
+          <ol className="mt-3 list-decimal space-y-1 pl-5 text-xs text-muted-foreground">
+            <li>Open FastDL (or any Reel downloader) with your link</li>
+            <li>Save the MP4 to your device</li>
+            <li>Upload it here → Send to Prompt from video</li>
+          </ol>
+        </div>
+      ) : (
+        <div className="rounded-2xl border border-dashed border-border p-4 text-sm text-muted-foreground">
+          <p className="font-medium text-foreground">Or upload an MP4 directly</p>
+          <p className="mt-1 text-xs">
+            If automatic Download fails, grab the file from FastDL and drop it
+            here — same end result.
+          </p>
+          <label className="mt-3 inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-border bg-background px-4 py-2 text-xs font-semibold hover:bg-muted">
+            {uploading ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Upload className="h-3.5 w-3.5" />
+            )}
+            {uploading
+              ? `Uploading${uploadPct != null ? ` ${uploadPct}%` : "…"}`
+              : "Upload MP4"}
+            <input
+              type="file"
+              accept="video/mp4,video/*,.mp4"
+              className="hidden"
+              disabled={uploading || busy}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void onUploadMp4(f);
+                e.target.value = "";
+              }}
+            />
+          </label>
+        </div>
+      )}
 
       {result ? (
         <div className="rounded-2xl border border-border p-4">
@@ -205,11 +321,15 @@ export function InstagramImportPanel() {
         <p className="font-medium text-foreground">How it works</p>
         <ol className="mt-2 list-decimal space-y-1 pl-5">
           <li>Copy the Reel URL from Instagram</li>
-          <li>Paste here and hit Download</li>
-          <li>Save the MP4, or send it into Prompt from video for Wan recreate</li>
+          <li>Paste here and hit Download (we try several resolvers)</li>
+          <li>
+            If Instagram blocks them: FastDL → save MP4 → Upload here → Prompt
+            from video
+          </li>
         </ol>
         <p className="mt-3 text-xs">
-          Public posts only. Private accounts won&apos;t resolve. Keep creator
+          Public posts only. Instagram often requires login for scrapers now —
+          that is on their side, not a missing AiInstaReels toggle. Keep creator
           copyright in mind when reusing content.
         </p>
       </div>
