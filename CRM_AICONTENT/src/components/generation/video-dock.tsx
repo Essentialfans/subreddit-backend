@@ -397,11 +397,10 @@ export function VideoDock({
     if (
       videoModel.supportsReferenceMedia &&
       referenceVideoUrls.length > 0 &&
-      !referenceUrl.trim() &&
-      !(creator?.coverUrl || (creator?.refs?.length ?? 0) > 0)
+      !referenceUrl.trim()
     ) {
       setError(
-        "Add your My Model still (Image1) or select My Model before Video1 — without it Wan copies the person from the reference reel."
+        "Add your reference still as Image1 before Video1 — identity comes only from that picture (not My Models library clothes)."
       );
       return;
     }
@@ -438,15 +437,12 @@ export function VideoDock({
       const hasStartingFrame = Boolean(jobReferenceUrl.trim());
       const hasRefVideos = jobReferenceVideoUrls.length > 0;
       const hasRefAudios = jobReferenceAudioUrls.length > 0;
-      const hasMyModelIdentity = Boolean(
-        jobCreator?.coverUrl || (jobCreator?.refs?.length ?? 0) > 0
-      );
       // Wan: image+video/audio refs → reference_* mode (not first_frame).
-      // Identity can come from the attached still OR the selected My Model.
+      // Identity is ONLY the attached reference still — never My Models library.
       const useImageVideoRefs =
         Boolean(jobModel.supportsReferenceMedia) &&
         (hasRefVideos || hasRefAudios) &&
-        (hasStartingFrame || hasMyModelIdentity);
+        hasStartingFrame;
 
       if (acceptsPrompt && jobEnhance) {
         const enhanceRes = await fetch("/api/generation/enhance", {
@@ -499,31 +495,14 @@ export function VideoDock({
         }
       }
 
-      const identityUrls = [
-        ...(jobCreator?.coverUrl ? [jobCreator.coverUrl] : []),
-        ...(jobCreator?.refs.map((r) => r.publicUrl) ?? []),
-      ].filter((url, i, arr) => Boolean(url) && arr.indexOf(url) === i);
-
-      // Image+video ref mode: My Model identity MUST be Image1.
-      // Prefer library cover/face refs first so a scene still cannot become
-      // the wrong person. Still (outfit pose) follows as Image2+.
+      // Video identity = attached reference still ONLY.
+      // Never inject My Models library cover/refs — those mix wardrobe/look
+      // into Image1 and overwrite the outfit in the reference picture.
       let imageUrls: string[];
-      if (jobModel.requiresMotionVideo) {
-        imageUrls = stillUrl ? [stillUrl] : [];
-      } else if (useImageVideoRefs) {
-        const idFirst = identityUrls.slice(0, 4);
-        const stillExtra =
-          stillUrl && !idFirst.includes(stillUrl) ? [stillUrl] : [];
-        // If no My Model library refs, fall back to the attached still alone.
-        imageUrls = (idFirst.length ? [...idFirst, ...stillExtra] : stillExtra)
-          .filter(Boolean)
-          .slice(0, 6);
-        if (!imageUrls.length && stillUrl) imageUrls = [stillUrl];
-      } else if (stillUrl) {
-        // first_frame path — only the still (extra My Model refs were overwriting outfit)
+      if (stillUrl) {
         imageUrls = [stillUrl];
       } else {
-        imageUrls = identityUrls;
+        imageUrls = [];
       }
 
       if (acceptsPrompt && useImageVideoRefs) {
@@ -561,8 +540,8 @@ export function VideoDock({
           videoNoTextRule(finalPrompt),
         ].join(" ");
       } else if (acceptsPrompt && jobCreator?.name) {
-        // No starting frame — My Model can guide appearance.
-        finalPrompt = `${finalPrompt} Featuring ${jobCreator.name}, matching My Models reference identity. ${wanNaturalSpeechRule({ prompt: finalPrompt, modelName: jobCreator.name })} ${videoNoTextRule(finalPrompt)}`;
+        // No attached still — name only (no My Models library images are sent).
+        finalPrompt = `${finalPrompt} Featuring ${jobCreator.name}. ${wanNaturalSpeechRule({ prompt: finalPrompt, modelName: jobCreator.name })} ${videoNoTextRule(finalPrompt)}`;
       } else if (acceptsPrompt) {
         finalPrompt = `${finalPrompt} ${wanNaturalSpeechRule({ prompt: finalPrompt })} ${videoNoTextRule(finalPrompt)}`;
       }
@@ -789,11 +768,11 @@ export function VideoDock({
               From Prompt-from-video
             </p>
             <p className="mt-1">
-              Wan will <strong>replace the person in Video1 with Image1</strong>{" "}
-              (My Model). Video1 is motion only — never use a freeze-frame of the
-              reel woman as Image1. Prefer Motion Control →{" "}
-              <strong>Wan Animate Replace</strong> if Wan 3.0 still copies the
-              reel face. Enhance stays off with Video1.
+              Wan will <strong>replace the person in Video1 with Image1</strong>.
+              Identity + outfit come only from your attached reference picture —
+              My Models library photos are not mixed in. Video1 is motion only.
+              Prefer Motion Control → <strong>Wan Animate Replace</strong> if Wan
+              3.0 still copies the reel face. Enhance stays off with Video1.
             </p>
           </div>
         ) : null}
@@ -922,7 +901,7 @@ export function VideoDock({
             <p className="gen-label">
               {videoModel?.supportsReferenceMedia
                 ? referenceVideoUrls.length
-                  ? "Image1 identity (My Model face — NOT a freeze from Video1)"
+                  ? "Image1 identity (your reference picture only)"
                   : "Starting frame (turns into video)"
                 : "Starting frame (turns into video)"}
             </p>
@@ -966,7 +945,7 @@ export function VideoDock({
               ) : !referenceUrl ? (
                 <span className="text-xs text-muted-foreground">
                   {fromClip
-                    ? "Use your My Model still (Image → Send to video) — not a frame from the reference reel"
+                    ? "Attach your reference picture (Image → Send to video) — identity + outfit come from that image only"
                     : videoModel?.supportsReferenceMedia
                       ? "Optional — or Send to video from Image Generation"
                       : "or Send to video from Image Generation"}
@@ -989,8 +968,8 @@ export function VideoDock({
             </div>
             {fromClip && referenceUrl.trim() ? (
               <p className="text-[11px] text-muted-foreground">
-                Starting frame locks face + outfit to this still. Confirm it is{" "}
-                <strong>My Model</strong>, not the reference reel’s person.
+                This reference picture alone locks face + outfit. Confirm it is
+                your talent still, not a freeze of the reference reel’s person.
               </p>
             ) : null}
           </div>
@@ -1221,8 +1200,8 @@ export function VideoDock({
                 </div>
                 {looksLikeRecreateScript ? (
                   <p className="text-[11px] text-muted-foreground">
-                    @Video1 = motion only. Keep the My Model still attached —
-                    we seal the job so Wan must not copy the reel’s face.
+                    Video1 = motion only. Keep your reference picture as Image1 —
+                    that image alone sets face + outfit (My Models library is not sent).
                   </p>
                 ) : null}
               </div>
