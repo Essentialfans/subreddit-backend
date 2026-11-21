@@ -291,6 +291,8 @@ export function VideoDock({
       let finalPrompt = jobPrompt;
       // Wan Animate Move has no prompt field — skip enhance/identity text.
       const acceptsPrompt = !jobModel.omitPrompt;
+      const hasStartingFrame = Boolean(jobReferenceUrl.trim());
+
       if (acceptsPrompt && jobEnhance) {
         const enhanceRes = await fetch("/api/generation/enhance", {
           method: "POST",
@@ -301,10 +303,10 @@ export function VideoDock({
             modelName: jobCreator?.name,
             modelId: jobModel.id,
             enhanceWithAi: jobEnhance,
-            hasImage: Boolean(jobReferenceUrl),
+            hasImage: hasStartingFrame,
             durationSec: jobShowDuration ? jobDuration : null,
             aspect: jobRatio,
-            refLabels: jobReferenceUrl ? ["source still"] : [],
+            refLabels: hasStartingFrame ? ["starting-frame"] : [],
           }),
         });
         const enhanceJson = (await enhanceRes.json()) as {
@@ -318,13 +320,25 @@ export function VideoDock({
           // do not append a generic video suffix (that would mix formats).
           finalPrompt = enhanceJson.prompt;
         }
-      } else if (acceptsPrompt && jobCreator?.name) {
-        finalPrompt = `${finalPrompt} Featuring ${jobCreator.name}, matching reference identity.`;
       } else if (!acceptsPrompt) {
         finalPrompt = "";
       }
 
-      // Motion-control APIs take exactly one still; prompting models can use identity refs too.
+      // Starting frame = the video. Keep outfit/look/scene unless the prompt says otherwise.
+      if (acceptsPrompt && hasStartingFrame) {
+        finalPrompt = [
+          `STARTING FRAME LOCK: Animate the attached starting-frame image into video.`,
+          `Keep the same person, face, hair, body, clothing/outfit, colors, and background from that starting frame.`,
+          `Do NOT change clothes, identity, or restyle the subject unless the user prompt explicitly asks for it.`,
+          `Only add motion / camera as described. Output aspect ratio ${jobRatio}.`,
+          finalPrompt,
+        ].join(" ");
+      } else if (acceptsPrompt && jobCreator?.name) {
+        // No starting frame — My Model can guide appearance.
+        finalPrompt = `${finalPrompt} Featuring ${jobCreator.name}, matching My Models reference identity.`;
+      }
+
+      // Motion-control / i2v: the inserted still is the character + outfit source of truth.
       let stillUrl = jobReferenceUrl;
       if (jobModel.requiresMotionVideo && stillUrl) {
         const prepared = await ensureStillFitsModel({
@@ -340,14 +354,20 @@ export function VideoDock({
         }
       }
 
+      // With a starting frame: send ONLY that frame (Wan first_frame / motion still).
+      // Do not attach My Models refs here — they were overwriting the frame's outfit.
+      // Without a starting frame: fall back to My Models identity images.
+      const identityUrls = [
+        ...(jobCreator?.coverUrl ? [jobCreator.coverUrl] : []),
+        ...(jobCreator?.refs.map((r) => r.publicUrl) ?? []),
+      ].filter((url, i, arr) => Boolean(url) && arr.indexOf(url) === i);
       const imageUrls = jobModel.requiresMotionVideo
         ? stillUrl
           ? [stillUrl]
           : []
-        : [
-            ...(stillUrl ? [stillUrl] : []),
-            ...(jobCreator?.refs.map((r) => r.publicUrl) ?? []),
-          ];
+        : stillUrl
+          ? [stillUrl]
+          : identityUrls;
 
       const createRes = await fetch("/api/generation/create", {
         method: "POST",
@@ -496,7 +516,11 @@ export function VideoDock({
         ))}
         <div className="gen-dock-cell gen-dock-cell--aside flex-col gap-3 px-4 text-center">
           <p className="text-xs font-medium text-muted-foreground">
-            Source still
+            Starting frame
+          </p>
+          <p className="max-w-[10rem] text-[10px] leading-snug text-muted-foreground">
+            This image becomes the video — outfit &amp; look stay unless the
+            prompt says otherwise.
           </p>
           {referenceUrl ? (
             <div className="relative">
@@ -686,8 +710,8 @@ export function VideoDock({
               {videoModel?.supportsReferenceMedia
                 ? referenceVideoUrls.length
                   ? "Reference image (@Image1)"
-                  : "Start frame"
-                : "Source still"}
+                  : "Starting frame (turns into video)"
+                : "Starting frame (turns into video)"}
             </p>
             <div className="flex flex-wrap items-center gap-2">
               <label

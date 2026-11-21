@@ -597,18 +597,23 @@ export function buildKieInput(options: {
 
   // Most market models accept aspect_ratio; Veo uses slightly different shapes.
   // Motion-control APIs (Kling Motion / Wan Animate) omit aspect.
-  // Wan 3.0 with media uses adaptive aspect (follows input proportions).
+  // Wan 3.0 accepts adaptive | 16:9 | 4:3 | 1:1 | 3:4 | 9:16 — honor the UI pick.
+  const wanAspectAllowed = new Set([
+    "adaptive",
+    "16:9",
+    "4:3",
+    "1:1",
+    "3:4",
+    "9:16",
+  ]);
   if (def.id === "veo-3-1") {
     input.aspectRatio = aspect;
     input.model = "veo3_fast";
     if (hasImage) {
       input.imageUrls = uniqueUrls;
     }
-  } else if (
-    (hasImage || referenceVideos.length > 0) &&
-    isWan3Family(def.id)
-  ) {
-    input.aspect_ratio = "adaptive";
+  } else if (isWan3Family(def.id) && !def.omitAspect) {
+    input.aspect_ratio = wanAspectAllowed.has(aspect) ? aspect : "adaptive";
   } else if (
     !def.omitAspect &&
     !(hasImage && def.id === "pixverse-v6-max")
