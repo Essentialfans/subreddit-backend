@@ -73,6 +73,14 @@ export async function updateSession(request: NextRequest) {
   }
 
   if (!user) {
+    // API callers expect JSON — never redirect them to the HTML login page
+    // (that becomes: Unexpected token '<', "<!DOCTYPE "... is not valid JSON).
+    if (pathname.startsWith("/api/")) {
+      return NextResponse.json(
+        { ok: false, error: "Unauthorized — sign in again." },
+        { status: 401 }
+      );
+    }
     const loginUrl = new URL("/login", request.url);
     loginUrl.searchParams.set("from", pathname);
     return NextResponse.redirect(loginUrl);
