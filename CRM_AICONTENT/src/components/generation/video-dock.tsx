@@ -114,11 +114,14 @@ export function VideoDock({
   initialImageUrl,
   initialPrompt,
   initialVideoModelId,
+  fromPromptClip = false,
 }: {
   initialModelId?: string | null;
   initialImageUrl?: string | null;
   initialPrompt?: string | null;
   initialVideoModelId?: string | null;
+  /** Arrived from Prompt-from-video — My Model identity, not source face. */
+  fromPromptClip?: boolean;
 }) {
   const [creatorModels, setCreatorModels] = useState<CreatorModel[]>([]);
   const [creatorId, setCreatorId] = useState<string | null>(
@@ -169,6 +172,7 @@ export function VideoDock({
   const [audioUrl, setAudioUrl] = useState("");
   // Prefills from Prompt-from-video should not be rewritten by Enhance.
   const [enhance, setEnhance] = useState(!initialPrompt);
+  const [fromClip, setFromClip] = useState(fromPromptClip);
   const [slots, setSlots] = useState<Slot[]>([{ state: "empty" }]);
   const [activeJobs, setActiveJobs] = useState(0);
   const [error, setError] = useState("");
@@ -188,6 +192,8 @@ export function VideoDock({
         modelId?: string;
         wan?: string;
         aspect?: string;
+        identityMode?: string;
+        from?: string;
       };
       if (data.prompt?.trim()) {
         setPrompt(data.prompt.trim());
@@ -196,6 +202,13 @@ export function VideoDock({
       if (data.modelId) setCreatorId(data.modelId);
       if (data.wan) setVideoModelId(data.wan);
       if (data.aspect) setRatio(data.aspect);
+      if (data.from === "prompt-clip" || data.identityMode === "my-model") {
+        setFromClip(true);
+        // Never keep a leftover starting frame from a prior session — that
+        // locks the SOURCE face and makes the output look like the reference reel.
+        setReferenceUrl("");
+        setEndFrameUrl("");
+      }
     } catch {
       // ignore corrupt payload
     }
@@ -322,6 +335,14 @@ export function VideoDock({
     }
     if (!videoModel.promptOptional && prompt.trim().length < 3) {
       setError("Add a short motion prompt.");
+      return;
+    }
+    // Prompt-from-video path: a starting frame from the SOURCE reel remakes
+    // that person (My Model refs are dropped). Block the footgun.
+    if (fromClip && referenceUrl.trim() && !referenceVideoUrls.length) {
+      setError(
+        "Starting frame is set — that locks identity to THAT image (usually the reference reel’s person), so My Model is ignored and the output looks like the original. Clear Starting frame to generate with My Model, or only keep a frame that is already your model in the outfit."
+      );
       return;
     }
 
@@ -653,6 +674,32 @@ export function VideoDock({
           </p>
         </div>
 
+        {fromClip ? (
+          <div className="rounded-xl border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+            <p className="font-medium text-foreground">
+              From Prompt-from-video
+            </p>
+            <p className="mt-1">
+              The reference reel only taught the prompt. Generate here with{" "}
+              <strong>My Model</strong> selected and{" "}
+              <strong>Starting frame empty</strong> — otherwise Wan remakes the
+              source person and the result looks like the original video.
+            </p>
+            {referenceUrl.trim() ? (
+              <button
+                type="button"
+                className="mt-2 text-xs font-semibold text-primary underline-offset-2 hover:underline"
+                onClick={() => {
+                  setReferenceUrl("");
+                  setEndFrameUrl("");
+                }}
+              >
+                Clear starting frame now
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
         <div
           className="flex flex-wrap items-end gap-4"
           data-menu-row={
@@ -820,14 +867,34 @@ export function VideoDock({
                 <UploadProgressBar pct={stillUploadPct} label="Uploading still…" />
               ) : !referenceUrl ? (
                 <span className="text-xs text-muted-foreground">
-                  {videoModel?.supportsReferenceMedia
-                    ? "Optional — or Send to video from Image Generation"
-                    : "or Send to video from Image Generation"}
+                  {fromClip
+                    ? "Leave empty for My Model identity (prompt-from-video)"
+                    : videoModel?.supportsReferenceMedia
+                      ? "Optional — or Send to video from Image Generation"
+                      : "or Send to video from Image Generation"}
                 </span>
               ) : (
-                <span className="text-xs text-accent-green">Attached</span>
+                <span className="inline-flex items-center gap-2 text-xs text-accent-green">
+                  Attached
+                  <button
+                    type="button"
+                    className="text-muted-foreground underline-offset-2 hover:underline"
+                    onClick={() => {
+                      setReferenceUrl("");
+                      setEndFrameUrl("");
+                    }}
+                  >
+                    Clear
+                  </button>
+                </span>
               )}
             </div>
+            {fromClip && referenceUrl.trim() ? (
+              <p className="text-[11px] text-accent-red">
+                This frame overrides My Model — clear it unless it is already
+                your model in the target outfit.
+              </p>
+            ) : null}
           </div>
 
           {videoModel?.supportsReferenceMedia &&
