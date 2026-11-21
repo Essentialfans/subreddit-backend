@@ -1,22 +1,17 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireUserId } from "@/lib/kie/keys";
+import { OUTPUTS_BUCKET } from "@/lib/outputs/store";
 
 export const runtime = "nodejs";
 
-const BUCKET = "creator-models";
+const IMAGE_BUCKET = "creator-models";
 
 export async function POST(request: Request) {
   try {
     const userId = await requireUserId();
     const admin = createAdminClient();
     const { data: buckets } = await admin.storage.listBuckets();
-    if (!buckets?.some((b) => b.name === BUCKET)) {
-      await admin.storage.createBucket(BUCKET, {
-        public: true,
-        fileSizeLimit: 8 * 1024 * 1024,
-      });
-    }
 
     const form = await request.formData();
     const file = form.get("file");
@@ -27,16 +22,45 @@ export async function POST(request: Request) {
       );
     }
 
-    const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
-    const path = `${userId}/uploads/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+    const isVideo = (file.type || "").startsWith("video/");
+    const bucket = isVideo ? OUTPUTS_BUCKET : IMAGE_BUCKET;
+    const limit = isVideo ? 50 * 1024 * 1024 : 8 * 1024 * 1024;
+
+    if (!buckets?.some((b) => b.name === bucket)) {
+      const { error: createErr } = await admin.storage.createBucket(bucket, {
+        public: true,
+        fileSizeLimit: limit,
+      });
+      if (createErr && !/already exists|duplicate/i.test(createErr.message)) {
+        throw new Error(createErr.message);
+      }
+    }
+
+    if (file.size > limit) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: isVideo
+            ? "Motion video must be under 50MB"
+            : "Image must be under 8MB",
+        },
+        { status: 400 }
+      );
+    }
+
+    const ext =
+      file.name.split(".").pop()?.toLowerCase() || (isVideo ? "mp4" : "jpg");
+    const path = `${userId}/uploads/${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2)}.${ext}`;
     const buffer = Buffer.from(await file.arrayBuffer());
-    const { error } = await admin.storage.from(BUCKET).upload(path, buffer, {
-      contentType: file.type || "image/jpeg",
+    const { error } = await admin.storage.from(bucket).upload(path, buffer, {
+      contentType: file.type || (isVideo ? "video/mp4" : "image/jpeg"),
       upsert: false,
     });
     if (error) throw new Error(error.message);
 
-    const { data } = admin.storage.from(BUCKET).getPublicUrl(path);
+    const { data } = admin.storage.from(bucket).getPublicUrl(path);
     return NextResponse.json({ ok: true, url: data.publicUrl });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Upload failed";

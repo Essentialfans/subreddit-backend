@@ -5,6 +5,8 @@ import { useCallback, useEffect, useState } from "react";
 import { Loader2, Plus, Search, UserRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { UploadProgressBar } from "@/components/generation/upload-progress";
+import { postFormWithProgress } from "@/lib/generation/upload-client";
 import { cn } from "@/lib/utils";
 import type { CreatorModel } from "@/lib/models/types";
 
@@ -18,6 +20,7 @@ export function MyModelsPage() {
   const [name, setName] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [uploadPct, setUploadPct] = useState<number | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -88,24 +91,27 @@ export function MyModelsPage() {
   }
 
   async function uploadRef(file: File) {
-    if (!selected) return;
+    if (!selected || uploading) return;
     setUploading(true);
+    setUploadPct(0);
     setError("");
     try {
       const form = new FormData();
       form.append("file", file);
-      const res = await fetch(`/api/models/${selected.id}/refs`, {
-        method: "POST",
-        body: form,
-      });
-      const json = (await res.json()) as { ok: boolean; error?: string };
-      if (!res.ok || !json.ok) throw new Error(json.error || "Upload failed");
+      const { status, json } = await postFormWithProgress<{
+        ok: boolean;
+        error?: string;
+      }>(`/api/models/${selected.id}/refs`, form, setUploadPct);
+      if (status < 200 || status >= 300 || !json.ok) {
+        throw new Error(json.error || "Upload failed");
+      }
       await refresh();
       setSelectedId(selected.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload failed");
     } finally {
       setUploading(false);
+      setUploadPct(null);
     }
   }
 
@@ -274,7 +280,11 @@ export function MyModelsPage() {
                 ))}
                 {selected.refs.length < 3 ? (
                   <label className="flex aspect-square cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-border text-xs text-muted-foreground hover:border-primary hover:text-primary">
-                    {uploading ? (
+                    {uploading && uploadPct !== null ? (
+                      <span className="tabular-nums text-foreground">
+                        {uploadPct}%
+                      </span>
+                    ) : uploading ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
                     ) : (
                       <>
@@ -296,6 +306,9 @@ export function MyModelsPage() {
                   </label>
                 ) : null}
               </div>
+              {uploadPct !== null ? (
+                <UploadProgressBar pct={uploadPct} label="Uploading ref…" />
+              ) : null}
               <p className="text-sm text-muted-foreground">
                 One identity. A consistent look across your images and videos.
               </p>
