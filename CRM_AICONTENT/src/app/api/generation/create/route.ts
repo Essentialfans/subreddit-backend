@@ -33,6 +33,7 @@ export async function POST(request: Request) {
       lastFrameUrl?: string | null;
       videoUrl?: string | null;
       referenceVideoUrls?: string[] | null;
+      referenceAudioUrls?: string[] | null;
       audioUrl?: string | null;
     };
 
@@ -114,6 +115,14 @@ export async function POST(request: Request) {
       ),
     ].slice(0, model.maxReferenceVideos ?? 5);
 
+    let referenceAudioUrls = [
+      ...new Set(
+        (body.referenceAudioUrls ?? [])
+          .map((u) => (typeof u === "string" ? u.trim() : ""))
+          .filter(Boolean)
+      ),
+    ].slice(0, model.maxReferenceAudios ?? 5);
+
     let lastFrameUrl = body.lastFrameUrl?.trim() || null;
 
     if (referenceVideoUrls.length && !model.supportsReferenceMedia) {
@@ -121,6 +130,16 @@ export async function POST(request: Request) {
         {
           ok: false,
           error: `${model.label} does not support reference videos — use Wan 3.0 / Prime, or Motion Control.`,
+        },
+        { status: 400 }
+      );
+    }
+
+    if (referenceAudioUrls.length && !model.maxReferenceAudios) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `${model.label} does not support reference audio — use Wan 3.0 / Prime with @Audio1.`,
         },
         { status: 400 }
       );
@@ -147,7 +166,10 @@ export async function POST(request: Request) {
     }
 
     // kie: reference_* cannot mix with first/last frame
-    if (referenceVideoUrls.length && lastFrameUrl) {
+    if (
+      (referenceVideoUrls.length || referenceAudioUrls.length) &&
+      lastFrameUrl
+    ) {
       lastFrameUrl = null;
     }
 
@@ -198,6 +220,20 @@ export async function POST(request: Request) {
         }
         referenceVideoUrls = rehostedVideos;
       }
+      if (referenceAudioUrls.length) {
+        const rehostedAudios: string[] = [];
+        for (const [i, url] of referenceAudioUrls.entries()) {
+          rehostedAudios.push(
+            await rehostToKie({
+              apiKey,
+              fileUrl: url,
+              uploadPath: `ainstareel/${userId}/ref-audio`,
+              fileName: `ref-audio-${i + 1}.mp3`,
+            })
+          );
+        }
+        referenceAudioUrls = rehostedAudios;
+      }
     }
 
     const allowedDurations = model.durations ?? [];
@@ -229,6 +265,7 @@ export async function POST(request: Request) {
       lastFrameUrl,
       videoUrl,
       referenceVideoUrls,
+      referenceAudioUrls,
       audioUrl: body.audioUrl,
     });
 

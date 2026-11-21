@@ -34,6 +34,7 @@ import { uploadGenerationFile } from "@/lib/generation/upload-client";
 import { ensureStillFitsModel } from "@/lib/generation/prepare-media";
 import {
   videoNoTextRule,
+  wanGentleVoiceRule,
   wanImageVideoRefSeal,
 } from "@/lib/generation/prompt-recipes";
 import { saveOutputToGallery } from "@/lib/outputs/client";
@@ -164,6 +165,7 @@ export function VideoDock({
   const [endFrameUrl, setEndFrameUrl] = useState("");
   const [motionVideoUrl, setMotionVideoUrl] = useState("");
   const [referenceVideoUrls, setReferenceVideoUrls] = useState<string[]>([]);
+  const [referenceAudioUrls, setReferenceAudioUrls] = useState<string[]>([]);
   const [stillUploadPct, setStillUploadPct] = useState<number | null>(null);
   const [endFrameUploadPct, setEndFrameUploadPct] = useState<number | null>(
     null
@@ -172,6 +174,10 @@ export function VideoDock({
   const [refVideoUploadPct, setRefVideoUploadPct] = useState<number | null>(
     null
   );
+  const [refAudioUploadPct, setRefAudioUploadPct] = useState<number | null>(
+    null
+  );
+  const [extractingAudio, setExtractingAudio] = useState(false);
   const [audioUrl, setAudioUrl] = useState("");
   // Prefills from Prompt-from-video should not be rewritten by Enhance.
   const [enhance, setEnhance] = useState(!initialPrompt);
@@ -247,18 +253,53 @@ export function VideoDock({
   useEffect(() => {
     if (!videoModel?.supportsReferenceMedia) {
       if (referenceVideoUrls.length) setReferenceVideoUrls([]);
+      if (referenceAudioUrls.length) setReferenceAudioUrls([]);
       if (endFrameUrl) setEndFrameUrl("");
       return;
     }
-    // kie forbids mixing reference videos with start/end frame
-    if (referenceVideoUrls.length && endFrameUrl) {
+    // kie forbids mixing reference_* with start/end frame
+    if (
+      (referenceVideoUrls.length || referenceAudioUrls.length) &&
+      endFrameUrl
+    ) {
       setEndFrameUrl("");
     }
   }, [
     videoModel?.supportsReferenceMedia,
     referenceVideoUrls.length,
+    referenceAudioUrls.length,
     endFrameUrl,
   ]);
+
+  async function extractVoiceFromVideo(videoUrl: string) {
+    setExtractingAudio(true);
+    setError("");
+    try {
+      const res = await fetch("/api/generation/extract-audio", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ videoUrl }),
+      });
+      const json = await readApiJson<{
+        ok?: boolean;
+        url?: string;
+        error?: string;
+      }>(res);
+      if (!res.ok || !json.ok || !json.url) {
+        throw new Error(json.error || "Could not extract voice from video");
+      }
+      const max = videoModel?.maxReferenceAudios ?? 5;
+      setReferenceAudioUrls((prev) => [...prev, json.url!].slice(0, max));
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not extract voice — upload an MP3 instead"
+      );
+    } finally {
+      setExtractingAudio(false);
+    }
+  }
 
   // Keep selected model inside the active category
   useEffect(() => {
@@ -366,6 +407,7 @@ export function VideoDock({
     const jobEndFrameUrl = endFrameUrl.trim();
     const jobMotionVideoUrl = motionVideoUrl.trim();
     const jobReferenceVideoUrls = [...referenceVideoUrls];
+    const jobReferenceAudioUrls = [...referenceAudioUrls];
     const jobAudioUrl = audioUrl.trim();
     const jobCreator = creator;
     const jobCreatorId = creatorId;
@@ -386,10 +428,11 @@ export function VideoDock({
       const acceptsPrompt = !jobModel.omitPrompt;
       const hasStartingFrame = Boolean(jobReferenceUrl.trim());
       const hasRefVideos = jobReferenceVideoUrls.length > 0;
-      // Wan: image+video refs → reference_* mode (not first_frame).
+      const hasRefAudios = jobReferenceAudioUrls.length > 0;
+      // Wan: image+video/audio refs → reference_* mode (not first_frame).
       const useImageVideoRefs =
         Boolean(jobModel.supportsReferenceMedia) &&
-        hasRefVideos &&
+        (hasRefVideos || hasRefAudios) &&
         hasStartingFrame;
 
       if (acceptsPrompt && jobEnhance) {
@@ -466,13 +509,14 @@ export function VideoDock({
       }
 
       if (acceptsPrompt && useImageVideoRefs) {
-        // @Image1 = who. @Video1 = how they move. Never copy the reel's person.
+        // @Image1 = who. @Video1 = motion. @Audio1 = voice.
         finalPrompt = [
           wanImageVideoRefSeal({
             modelName: jobCreator?.name,
             aspect: jobRatio,
             imageCount: imageUrls.length,
             videoCount: jobReferenceVideoUrls.length,
+            audioCount: jobReferenceAudioUrls.length,
           }),
           finalPrompt,
           videoNoTextRule(finalPrompt),
@@ -485,14 +529,15 @@ export function VideoDock({
           `Do NOT change clothes, identity, or restyle the subject unless the user prompt explicitly asks for it.`,
           `Do NOT keep or recreate burned-in captions, meme text, subtitles, stickers, or watermarks from the starting frame — clean video, no on-screen text.`,
           `Only add motion / camera as described. Output aspect ratio ${jobRatio}.`,
+          wanGentleVoiceRule(),
           finalPrompt,
           videoNoTextRule(finalPrompt),
         ].join(" ");
       } else if (acceptsPrompt && jobCreator?.name) {
         // No starting frame — My Model can guide appearance.
-        finalPrompt = `${finalPrompt} Featuring ${jobCreator.name}, matching My Models reference identity. ${videoNoTextRule(finalPrompt)}`;
+        finalPrompt = `${finalPrompt} Featuring ${jobCreator.name}, matching My Models reference identity. ${wanGentleVoiceRule()} ${videoNoTextRule(finalPrompt)}`;
       } else if (acceptsPrompt) {
-        finalPrompt = `${finalPrompt} ${videoNoTextRule(finalPrompt)}`;
+        finalPrompt = `${finalPrompt} ${wanGentleVoiceRule()} ${videoNoTextRule(finalPrompt)}`;
       }
 
       const createRes = await fetch("/api/generation/create", {
@@ -514,6 +559,9 @@ export function VideoDock({
           videoUrl: jobMotionVideoUrl || null,
           referenceVideoUrls: jobModel.supportsReferenceMedia
             ? jobReferenceVideoUrls
+            : [],
+          referenceAudioUrls: jobModel.maxReferenceAudios
+            ? jobReferenceAudioUrls
             : [],
           audioUrl: jobAudioUrl || null,
         }),
@@ -1062,10 +1110,18 @@ export function VideoDock({
                       setRefVideoUploadPct(0);
                       setError("");
                       void uploadGenerationFile(f, setRefVideoUploadPct)
-                        .then((url) => {
+                        .then(async (url) => {
                           setReferenceVideoUrls((prev) =>
                             [...prev, url].slice(0, max)
                           );
+                          // Auto-pull voice for @Audio1 so dialogue matches the reel
+                          // instead of robotic invented TTS.
+                          if (
+                            (videoModel.maxReferenceAudios ?? 0) > 0 &&
+                            referenceAudioUrls.length === 0
+                          ) {
+                            await extractVoiceFromVideo(url);
+                          }
                         })
                         .catch((err) =>
                           setError(
@@ -1087,8 +1143,8 @@ export function VideoDock({
                 />
               ) : (
                 <span className="text-xs text-muted-foreground">
-                  Motion/choreography only — identity stays on @Image1 (My
-                  Model). Cannot mix with start/end frame mode.
+                  Motion only — identity on @Image1. Voice is pulled into @Audio1
+                  automatically when possible.
                 </span>
               )}
             </div>
@@ -1135,6 +1191,140 @@ export function VideoDock({
                     @Video1 = motion only. Keep the My Model still attached —
                     we seal the job so Wan must not copy the reel’s face.
                   </p>
+                ) : null}
+              </div>
+            ) : null}
+
+            {(videoModel.maxReferenceAudios ?? 0) > 0 ? (
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="space-y-1">
+                    <p className="gen-label">Reference audio (voice)</p>
+                    <label
+                      className="gen-chip cursor-pointer"
+                      aria-disabled={
+                        refAudioUploadPct !== null ||
+                        extractingAudio ||
+                        referenceAudioUrls.length >=
+                          (videoModel.maxReferenceAudios ?? 5)
+                      }
+                    >
+                      {extractingAudio
+                        ? "Extracting voice…"
+                        : refAudioUploadPct !== null
+                          ? `Uploading ${refAudioUploadPct}%`
+                          : `+ Upload voice (${referenceAudioUrls.length}/${videoModel.maxReferenceAudios ?? 5})`}
+                      <input
+                        type="file"
+                        accept="audio/mpeg,audio/mp3,audio/wav,audio/mp4,audio/*"
+                        className="hidden"
+                        disabled={
+                          refAudioUploadPct !== null ||
+                          extractingAudio ||
+                          referenceAudioUrls.length >=
+                            (videoModel.maxReferenceAudios ?? 5)
+                        }
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          if (!f) return;
+                          const max = videoModel.maxReferenceAudios ?? 5;
+                          if (referenceAudioUrls.length >= max) return;
+                          setRefAudioUploadPct(0);
+                          setError("");
+                          void uploadGenerationFile(f, setRefAudioUploadPct)
+                            .then((url) => {
+                              setReferenceAudioUrls((prev) =>
+                                [...prev, url].slice(0, max)
+                              );
+                            })
+                            .catch((err) =>
+                              setError(
+                                err instanceof Error
+                                  ? err.message
+                                  : "Reference audio upload failed"
+                              )
+                            )
+                            .finally(() => setRefAudioUploadPct(null));
+                          e.target.value = "";
+                        }}
+                      />
+                    </label>
+                  </div>
+                  {refAudioUploadPct !== null || extractingAudio ? (
+                    <UploadProgressBar
+                      pct={refAudioUploadPct ?? 40}
+                      label={
+                        extractingAudio
+                          ? "Pulling voice from @Video1…"
+                          : "Uploading voice…"
+                      }
+                    />
+                  ) : (
+                    <span className="text-xs text-muted-foreground">
+                      @Audio1 = gentle natural voice from the reel (or your
+                      MP3). Stops robotic TTS.
+                    </span>
+                  )}
+                </div>
+                {referenceAudioUrls.length ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    {referenceAudioUrls.map((url, i) => (
+                      <div
+                        key={`${url}-${i}`}
+                        className="flex items-center gap-2 rounded-full border border-border bg-muted px-3 py-1 text-xs"
+                      >
+                        <span className="text-foreground">@Audio{i + 1}</span>
+                        <a
+                          href={url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="max-w-[140px] truncate text-muted-foreground underline-offset-2 hover:underline"
+                        >
+                          voice
+                        </a>
+                        <button
+                          type="button"
+                          className="text-muted-foreground underline-offset-2 hover:underline"
+                          onClick={() =>
+                            setReferenceAudioUrls((prev) =>
+                              prev.filter((_, idx) => idx !== i)
+                            )
+                          }
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                    {referenceVideoUrls[0] && !extractingAudio ? (
+                      <button
+                        type="button"
+                        className="text-xs font-medium text-primary underline-offset-2 hover:underline"
+                        onClick={() =>
+                          void extractVoiceFromVideo(referenceVideoUrls[0])
+                        }
+                      >
+                        Re-extract from @Video1
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+                      onClick={() => setReferenceAudioUrls([])}
+                    >
+                      Clear
+                    </button>
+                  </div>
+                ) : referenceVideoUrls[0] ? (
+                  <button
+                    type="button"
+                    className="text-xs font-semibold text-primary underline-offset-2 hover:underline"
+                    disabled={extractingAudio}
+                    onClick={() =>
+                      void extractVoiceFromVideo(referenceVideoUrls[0])
+                    }
+                  >
+                    Extract voice from @Video1 now
+                  </button>
                 ) : null}
               </div>
             ) : null}

@@ -56,11 +56,14 @@ export interface KieModel {
   omitPrompt?: boolean;
   /**
    * Wan 3.0-style all-purpose references:
-   * reference_image_urls + reference_video_urls (cannot mix with first_frame_url).
+   * reference_image_urls + reference_video_urls + reference_audio_urls
+   * (cannot mix with first_frame_url).
    */
   supportsReferenceMedia?: boolean;
   /** Max reference videos (kie Wan 3.0 = 5) */
   maxReferenceVideos?: number;
+  /** Max reference audio clips (kie Wan 3.0 = 5) → @Audio1… */
+  maxReferenceAudios?: number;
   /** Extra note shown under duration when special */
   durationNote?: string;
 }
@@ -336,7 +339,9 @@ export const VIDEO_MODELS: KieModel[] = [
     imageRefField: "first_frame_url",
     supportsReferenceMedia: true,
     maxReferenceVideos: 5,
-    blurb: "Wan’s latest general video model (up to 30s). Supports reference images + videos.",
+    maxReferenceAudios: 5,
+    blurb:
+      "Wan’s latest general video model (up to 30s). Supports reference images, videos, and audio (@Audio1 for voice).",
     aspectOptions: ["9:16", "16:9", "1:1", "4:3", "3:4"],
     defaultAspect: "9:16",
     durations: secRange(2, 30),
@@ -355,7 +360,9 @@ export const VIDEO_MODELS: KieModel[] = [
     imageRefField: "first_frame_url",
     supportsReferenceMedia: true,
     maxReferenceVideos: 5,
-    blurb: "Higher-speed Wan for quick cutdowns (up to 30s). Supports reference images + videos.",
+    maxReferenceAudios: 5,
+    blurb:
+      "Higher-speed Wan for quick cutdowns (up to 30s). Supports reference images, videos, and audio (@Audio1 for voice).",
     aspectOptions: ["9:16", "16:9", "1:1", "4:3", "3:4"],
     defaultAspect: "9:16",
     durations: secRange(2, 30),
@@ -555,6 +562,8 @@ export function buildKieInput(options: {
   videoUrl?: string | null;
   /** Wan 3.0 reference clips → reference_video_urls (@Video1…) */
   referenceVideoUrls?: string[] | null;
+  /** Wan 3.0 reference audio → reference_audio_urls (@Audio1…) for voice */
+  referenceAudioUrls?: string[] | null;
   audioUrl?: string | null;
   resolution?: string | null;
 }): { model: string; input: Record<string, unknown> } {
@@ -575,14 +584,23 @@ export function buildKieInput(options: {
         .filter(Boolean)
     ),
   ].slice(0, def.maxReferenceVideos ?? 5);
+  const referenceAudios = [
+    ...new Set(
+      (options.referenceAudioUrls ?? [])
+        .map((u) => u.trim())
+        .filter(Boolean)
+    ),
+  ].slice(0, def.maxReferenceAudios ?? 5);
   const slug =
     hasImage && def.imageRefModel ? def.imageRefModel : def.model;
 
   // Wan 3.0: reference_* cannot be combined with first_frame_url / last_frame_url.
-  // Prefer reference mode when clips (or multi-image refs) are provided.
+  // Prefer reference mode when clips / audio / multi-image refs are provided.
   const useWanReferences =
     Boolean(def.supportsReferenceMedia) &&
-    (referenceVideos.length > 0 || uniqueUrls.length > 1);
+    (referenceVideos.length > 0 ||
+      referenceAudios.length > 0 ||
+      uniqueUrls.length > 1);
 
   const input: Record<string, unknown> = {};
   const trimmedPrompt = prompt.trim();
@@ -666,6 +684,9 @@ export function buildKieInput(options: {
     if (referenceVideos.length) {
       input.reference_video_urls = referenceVideos;
     }
+    if (referenceAudios.length) {
+      input.reference_audio_urls = referenceAudios;
+    }
   } else if (hasImage && primary && def.id !== "veo-3-1") {
     const field = def.imageRefField ?? "image_url";
     // Motion-control APIs accept exactly one still (input_urls max 1 / image_url).
@@ -711,6 +732,12 @@ export function buildKieInput(options: {
 
   if (audioUrl && def.requiresAudio) {
     input.audio_url = audioUrl;
+  }
+
+  // Wan 3.0: always request an audio track; voice quality comes from @Audio1
+  // and/or prompt. Without this, dialogue often becomes robotic TTS.
+  if (isWan3Family(def.id)) {
+    input.audio = true;
   }
 
   // Kling Motion: character orientation defaults to video

@@ -88,35 +88,60 @@ export function videoNoTextRule(userText?: string): string {
   return "NO burned-in captions, meme text, subtitles, stickers, logos, or watermarks on the video. Do not recreate source overlay text like \"Wait for it…\". Clean plate — spoken dialogue is audio only, never on-screen text.";
 }
 
+/** Default spoken delivery when no @Audio1 is attached. */
+export function wanGentleVoiceRule(): string {
+  return "VOICE: gentle soft natural feminine speaking voice, warm and calm, clear close-mic studio presence — never robotic, never squeaky, never high-pitched TTS, never chipmunk or synthetic.";
+}
+
 /**
- * Wan 3.0 reference_image_urls + reference_video_urls mode.
- * Image = who appears. Video = motion/choreography only — never the person.
+ * Wan 3.0 reference_image_urls + reference_video_urls (+ optional audio) mode.
+ * Image = who appears. Video = motion only. Audio = voice.
  */
 export function wanImageVideoRefSeal(options: {
   modelName?: string | null;
   aspect: string;
   imageCount: number;
   videoCount: number;
+  audioCount?: number;
 }): string {
   const name = options.modelName?.trim() || "My Model";
+  const audioCount = options.audioCount ?? 0;
   const imgTag =
     options.imageCount > 1
       ? `@Image1…@Image${options.imageCount}`
       : "@Image1";
-  const vidTag =
-    options.videoCount > 1
-      ? `@Video1…@Video${options.videoCount}`
-      : "@Video1";
-  return [
+  const lines = [
     `REFERENCE SPLIT (CRITICAL):`,
     `${imgTag} = identity + face + body + hair for ${name} ONLY. Match the person in those images.`,
-    `${vidTag} = motion / choreography / timing / camera path ONLY.`,
-    `NEVER copy the face, hair, body type, skin, age, or identity of anyone visible in ${vidTag}.`,
-    `If ${vidTag} shows a different woman, ignore her appearance completely — only reuse how she moves.`,
-    `Follow the written timestamped beats; use ${vidTag} to make that motion accurate (including back-to-camera bra/prop beats).`,
-    `Output aspect ratio MUST be ${options.aspect} (vertical story if 9:16). Do not inherit ${vidTag}'s crop, zoom, or landscape framing.`,
-    `Full-body framing as the prompt describes — do not zoom into feet/legs unless a beat says so.`,
-  ].join(" ");
+  ];
+  if (options.videoCount > 0) {
+    const vidTag =
+      options.videoCount > 1
+        ? `@Video1…@Video${options.videoCount}`
+        : "@Video1";
+    lines.push(
+      `${vidTag} = motion / choreography / timing / body language ONLY — match her moves as closely as the prompt allows.`,
+      `NEVER copy the face, hair, body type, skin, age, or identity of anyone visible in ${vidTag}.`,
+      `If ${vidTag} shows a different woman, ignore her appearance completely — only reuse how she moves.`,
+      `Follow the written timestamped beats; use ${vidTag} to make that motion accurate (including back-to-camera bra/prop beats).`,
+      `Output aspect ratio MUST be ${options.aspect} (vertical story if 9:16). Do not inherit ${vidTag}'s crop, zoom, or landscape framing.`
+    );
+  } else {
+    lines.push(
+      `Output aspect ratio MUST be ${options.aspect} (vertical story if 9:16).`
+    );
+  }
+  if (audioCount > 0) {
+    lines.push(
+      `@Audio1 = speaking voice / delivery ONLY. Match that voice for all dialogue — gentle natural tone from the reference, never invent a robotic TTS voice.`
+    );
+  } else {
+    lines.push(wanGentleVoiceRule());
+  }
+  lines.push(
+    `Full-body framing as the prompt describes — do not zoom into feet/legs unless a beat says so.`
+  );
+  return lines.join(" ");
 }
 
 /** Hard face keep-list — Seedream/Nano respond better to explicit preserve lists. */
