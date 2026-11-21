@@ -54,8 +54,19 @@ export interface KieModel {
   promptOptional?: boolean;
   /** Never send prompt — API schema has no prompt field (e.g. Wan Animate Move) */
   omitPrompt?: boolean;
+  /**
+   * Wan 3.0-style all-purpose references:
+   * reference_image_urls + reference_video_urls (cannot mix with first_frame_url).
+   */
+  supportsReferenceMedia?: boolean;
+  /** Max reference videos (kie Wan 3.0 = 5) */
+  maxReferenceVideos?: number;
   /** Extra note shown under duration when special */
   durationNote?: string;
+}
+
+export function isWan3Family(id: string): boolean {
+  return id === "wan-3-0" || id === "wan-3-prime";
 }
 
 /** Inclusive integer seconds list for UI selectors */
@@ -321,9 +332,11 @@ export const VIDEO_MODELS: KieModel[] = [
     mode: "video",
     videoCategory: "prompting",
     model: "wan/3-0-video",
-    // kie docs: still → video uses first_frame_url (not image_url)
+    // kie: first_frame_url OR reference_* (not both)
     imageRefField: "first_frame_url",
-    blurb: "Wan’s latest general video model (up to 30s).",
+    supportsReferenceMedia: true,
+    maxReferenceVideos: 5,
+    blurb: "Wan’s latest general video model (up to 30s). Supports reference images + videos.",
     aspectOptions: ["9:16", "16:9", "1:1", "4:3", "3:4"],
     defaultAspect: "9:16",
     durations: secRange(2, 30),
@@ -340,7 +353,9 @@ export const VIDEO_MODELS: KieModel[] = [
     videoCategory: "prompting",
     model: "wan/3-0-video-prime",
     imageRefField: "first_frame_url",
-    blurb: "Higher-speed Wan for quick cutdowns (up to 30s).",
+    supportsReferenceMedia: true,
+    maxReferenceVideos: 5,
+    blurb: "Higher-speed Wan for quick cutdowns (up to 30s). Supports reference images + videos.",
     aspectOptions: ["9:16", "16:9", "1:1", "4:3", "3:4"],
     defaultAspect: "9:16",
     durations: secRange(2, 30),
@@ -535,7 +550,11 @@ export function buildKieInput(options: {
   duration?: number;
   imageUrl?: string | null;
   imageUrls?: string[] | null;
+  /** Optional Wan 3.0 last frame (only with first_frame_url, never with reference_*) */
+  lastFrameUrl?: string | null;
   videoUrl?: string | null;
+  /** Wan 3.0 reference clips → reference_video_urls (@Video1…) */
+  referenceVideoUrls?: string[] | null;
   audioUrl?: string | null;
   resolution?: string | null;
 }): { model: string; input: Record<string, unknown> } {
@@ -547,9 +566,23 @@ export function buildKieInput(options: {
   const uniqueUrls = [...new Set(urls)];
   const hasImage = uniqueUrls.length > 0;
   const primary = uniqueUrls[0];
+  const lastFrameUrl = options.lastFrameUrl?.trim() || "";
   const motionVideo = options.videoUrl?.trim() || "";
+  const referenceVideos = [
+    ...new Set(
+      (options.referenceVideoUrls ?? [])
+        .map((u) => u.trim())
+        .filter(Boolean)
+    ),
+  ].slice(0, def.maxReferenceVideos ?? 5);
   const slug =
     hasImage && def.imageRefModel ? def.imageRefModel : def.model;
+
+  // Wan 3.0: reference_* cannot be combined with first_frame_url / last_frame_url.
+  // Prefer reference mode when clips (or multi-image refs) are provided.
+  const useWanReferences =
+    Boolean(def.supportsReferenceMedia) &&
+    (referenceVideos.length > 0 || uniqueUrls.length > 1);
 
   const input: Record<string, unknown> = {};
   const trimmedPrompt = prompt.trim();
@@ -564,7 +597,7 @@ export function buildKieInput(options: {
 
   // Most market models accept aspect_ratio; Veo uses slightly different shapes.
   // Motion-control APIs (Kling Motion / Wan Animate) omit aspect.
-  // Wan 3.0 with a still uses adaptive aspect (follows the first frame).
+  // Wan 3.0 with media uses adaptive aspect (follows input proportions).
   if (def.id === "veo-3-1") {
     input.aspectRatio = aspect;
     input.model = "veo3_fast";
@@ -572,8 +605,8 @@ export function buildKieInput(options: {
       input.imageUrls = uniqueUrls;
     }
   } else if (
-    hasImage &&
-    (def.id === "wan-3-0" || def.id === "wan-3-prime")
+    (hasImage || referenceVideos.length > 0) &&
+    isWan3Family(def.id)
   ) {
     input.aspect_ratio = "adaptive";
   } else if (
@@ -621,10 +654,17 @@ export function buildKieInput(options: {
     input.duration = def.durationAsString ? String(duration) : duration;
   }
 
-  if (hasImage && primary && def.id !== "veo-3-1") {
+  if (useWanReferences) {
+    if (uniqueUrls.length) {
+      input.reference_image_urls = uniqueUrls.slice(0, 10);
+    }
+    if (referenceVideos.length) {
+      input.reference_video_urls = referenceVideos;
+    }
+  } else if (hasImage && primary && def.id !== "veo-3-1") {
     const field = def.imageRefField ?? "image_url";
     // Motion-control APIs accept exactly one still (input_urls max 1 / image_url).
-    // Wan 3.0 uses first_frame_url (single string) for still → video.
+    // Wan 3.0 single still → first_frame_url (+ optional last_frame_url).
     const imagePayload =
       def.requiresMotionVideo ||
       field === "input_urls" ||
@@ -641,6 +681,13 @@ export function buildKieInput(options: {
       input[field] = def.requiresMotionVideo ? [primary] : imagePayload;
     } else {
       input[field] = primary;
+    }
+    if (
+      field === "first_frame_url" &&
+      lastFrameUrl &&
+      def.supportsReferenceMedia
+    ) {
+      input.last_frame_url = lastFrameUrl;
     }
   }
 

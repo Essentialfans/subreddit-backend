@@ -96,9 +96,17 @@ export function VideoDock({
   const [duration, setDuration] = useState(5);
   const [resolution, setResolution] = useState("720p");
   const [referenceUrl, setReferenceUrl] = useState(initialImageUrl ?? "");
+  const [endFrameUrl, setEndFrameUrl] = useState("");
   const [motionVideoUrl, setMotionVideoUrl] = useState("");
+  const [referenceVideoUrls, setReferenceVideoUrls] = useState<string[]>([]);
   const [stillUploadPct, setStillUploadPct] = useState<number | null>(null);
+  const [endFrameUploadPct, setEndFrameUploadPct] = useState<number | null>(
+    null
+  );
   const [motionUploadPct, setMotionUploadPct] = useState<number | null>(null);
+  const [refVideoUploadPct, setRefVideoUploadPct] = useState<number | null>(
+    null
+  );
   const [audioUrl, setAudioUrl] = useState("");
   const [enhance, setEnhance] = useState(true);
   const [slot, setSlot] = useState<Slot>({ state: "empty" });
@@ -133,6 +141,23 @@ export function VideoDock({
   useEffect(() => {
     if (initialImageUrl) setReferenceUrl(initialImageUrl);
   }, [initialImageUrl]);
+
+  // Drop Wan-only media when switching away, or when modes conflict
+  useEffect(() => {
+    if (!videoModel?.supportsReferenceMedia) {
+      if (referenceVideoUrls.length) setReferenceVideoUrls([]);
+      if (endFrameUrl) setEndFrameUrl("");
+      return;
+    }
+    // kie forbids mixing reference videos with start/end frame
+    if (referenceVideoUrls.length && endFrameUrl) {
+      setEndFrameUrl("");
+    }
+  }, [
+    videoModel?.supportsReferenceMedia,
+    referenceVideoUrls.length,
+    endFrameUrl,
+  ]);
 
   // Keep selected model inside the active category
   useEffect(() => {
@@ -290,7 +315,16 @@ export function VideoDock({
           duration: showDuration ? duration : undefined,
           resolution: showResolution ? resolution : undefined,
           imageUrls,
+          lastFrameUrl:
+            videoModel.supportsReferenceMedia &&
+            !referenceVideoUrls.length &&
+            endFrameUrl.trim()
+              ? endFrameUrl.trim()
+              : null,
           videoUrl: motionVideoUrl.trim() || null,
+          referenceVideoUrls: videoModel.supportsReferenceMedia
+            ? referenceVideoUrls
+            : [],
           audioUrl: audioUrl.trim() || null,
         }),
       });
@@ -576,7 +610,13 @@ export function VideoDock({
           </div>
 
           <div className="space-y-1">
-            <p className="gen-label">Source still</p>
+            <p className="gen-label">
+              {videoModel?.supportsReferenceMedia
+                ? referenceVideoUrls.length
+                  ? "Reference image (@Image1)"
+                  : "Start frame"
+                : "Source still"}
+            </p>
             <div className="flex flex-wrap items-center gap-2">
               <label
                 className="gen-chip cursor-pointer"
@@ -616,13 +656,89 @@ export function VideoDock({
                 <UploadProgressBar pct={stillUploadPct} label="Uploading still…" />
               ) : !referenceUrl ? (
                 <span className="text-xs text-muted-foreground">
-                  or Send to video from Image Generation
+                  {videoModel?.supportsReferenceMedia
+                    ? "Optional — or Send to video from Image Generation"
+                    : "or Send to video from Image Generation"}
                 </span>
               ) : (
                 <span className="text-xs text-accent-green">Attached</span>
               )}
             </div>
           </div>
+
+          {videoModel?.supportsReferenceMedia &&
+          !referenceVideoUrls.length ? (
+            <div className="space-y-1">
+              <p className="gen-label">End frame</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <label
+                  className="gen-chip cursor-pointer"
+                  aria-disabled={
+                    endFrameUploadPct !== null || !referenceUrl.trim()
+                  }
+                >
+                  {endFrameUploadPct !== null ? (
+                    `Uploading ${endFrameUploadPct}%`
+                  ) : (
+                    <>
+                      <Plus className="h-4 w-4" />
+                      Upload
+                    </>
+                  )}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    disabled={
+                      endFrameUploadPct !== null || !referenceUrl.trim()
+                    }
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (!f) return;
+                      if (!referenceUrl.trim()) {
+                        setError("Add a start frame before the end frame.");
+                        return;
+                      }
+                      setEndFrameUploadPct(0);
+                      setError("");
+                      void uploadGenerationFile(f, setEndFrameUploadPct)
+                        .then(setEndFrameUrl)
+                        .catch((err) =>
+                          setError(
+                            err instanceof Error
+                              ? err.message
+                              : "End frame upload failed"
+                          )
+                        )
+                        .finally(() => setEndFrameUploadPct(null));
+                      e.target.value = "";
+                    }}
+                  />
+                </label>
+                {endFrameUploadPct !== null ? (
+                  <UploadProgressBar
+                    pct={endFrameUploadPct}
+                    label="Uploading end frame…"
+                  />
+                ) : endFrameUrl ? (
+                  <>
+                    <span className="text-xs text-accent-green">Attached</span>
+                    <button
+                      type="button"
+                      className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+                      onClick={() => setEndFrameUrl("")}
+                    >
+                      Clear
+                    </button>
+                  </>
+                ) : (
+                  <span className="text-xs text-muted-foreground">
+                    Optional — improves complex motion; start frame alone is OK
+                  </span>
+                )}
+              </div>
+            </div>
+          ) : null}
         </div>
 
         <div className="relative">
@@ -637,7 +753,9 @@ export function VideoDock({
             placeholder={
               videoModel?.omitPrompt
                 ? "No prompt needed — motion comes from your reference video"
-                : "Describe the motion… slow push-in, hair in wind, cinematic lights…"
+                : videoModel?.supportsReferenceMedia
+                  ? "Describe the scene… tag @Image1 / @Video1 for refs"
+                  : "Describe the motion… slow push-in, hair in wind, cinematic lights…"
             }
           />
           {videoModel?.omitPrompt ? null : (
@@ -653,6 +771,110 @@ export function VideoDock({
             </div>
           )}
         </div>
+
+        {videoModel?.supportsReferenceMedia ? (
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="space-y-1">
+                <p className="gen-label">Reference videos</p>
+                <label
+                  className="gen-chip cursor-pointer"
+                  aria-disabled={
+                    refVideoUploadPct !== null ||
+                    referenceVideoUrls.length >=
+                      (videoModel.maxReferenceVideos ?? 5)
+                  }
+                >
+                  {refVideoUploadPct !== null
+                    ? `Uploading ${refVideoUploadPct}%`
+                    : `+ Upload video (${referenceVideoUrls.length}/${videoModel.maxReferenceVideos ?? 5})`}
+                  <input
+                    type="file"
+                    accept="video/mp4,video/quicktime,video/*"
+                    className="hidden"
+                    disabled={
+                      refVideoUploadPct !== null ||
+                      referenceVideoUrls.length >=
+                        (videoModel.maxReferenceVideos ?? 5)
+                    }
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (!f) return;
+                      const max = videoModel.maxReferenceVideos ?? 5;
+                      if (referenceVideoUrls.length >= max) return;
+                      setRefVideoUploadPct(0);
+                      setError("");
+                      void uploadGenerationFile(f, setRefVideoUploadPct)
+                        .then((url) => {
+                          setReferenceVideoUrls((prev) =>
+                            [...prev, url].slice(0, max)
+                          );
+                        })
+                        .catch((err) =>
+                          setError(
+                            err instanceof Error
+                              ? err.message
+                              : "Reference video upload failed"
+                          )
+                        )
+                        .finally(() => setRefVideoUploadPct(null));
+                      e.target.value = "";
+                    }}
+                  />
+                </label>
+              </div>
+              {refVideoUploadPct !== null ? (
+                <UploadProgressBar
+                  pct={refVideoUploadPct}
+                  label="Uploading reference video…"
+                />
+              ) : (
+                <span className="text-xs text-muted-foreground">
+                  Optional — mp4/mov, 1–15s each, total ≤15s. Tag as @Video1…
+                  in the prompt. Cannot mix with start/end frame mode.
+                </span>
+              )}
+            </div>
+            {referenceVideoUrls.length ? (
+              <div className="flex flex-wrap items-center gap-2">
+                {referenceVideoUrls.map((url, i) => (
+                  <div
+                    key={`${url}-${i}`}
+                    className="flex items-center gap-2 rounded-full border border-border bg-muted px-3 py-1 text-xs"
+                  >
+                    <span className="text-foreground">@Video{i + 1}</span>
+                    <a
+                      href={url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="max-w-[140px] truncate text-muted-foreground underline-offset-2 hover:underline"
+                    >
+                      clip
+                    </a>
+                    <button
+                      type="button"
+                      className="text-muted-foreground underline-offset-2 hover:underline"
+                      onClick={() =>
+                        setReferenceVideoUrls((prev) =>
+                          prev.filter((_, idx) => idx !== i)
+                        )
+                      }
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+                  onClick={() => setReferenceVideoUrls([])}
+                >
+                  Clear all
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
 
         {videoModel?.requiresMotionVideo ? (
           <div className="flex flex-wrap items-center gap-3">
