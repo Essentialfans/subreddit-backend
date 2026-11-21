@@ -312,8 +312,10 @@ export function PromptFromVideoPanel({
             <p className="mt-1 text-sm text-muted-foreground">
               Drop a reference reel to <strong>analyze</strong> — this page only
               writes a Wan prompt. It does <strong>not</strong> remake the video.
-              Next: Send to Video studio with My Model selected (leave Starting
-              frame empty so identity comes from My Model, not the source face).
+              Next: make/use a <strong>My Model</strong> starting still (your
+              usual Image → Send to video), then generate in Video studio. Never
+              use a freeze-frame of the influencer from this reel as the starting
+              frame — that remakes their face.
             </p>
           </div>
           <div className="flex flex-1 flex-col items-center justify-center gap-4 p-6">

@@ -337,15 +337,6 @@ export function VideoDock({
       setError("Add a short motion prompt.");
       return;
     }
-    // Prompt-from-video path: a starting frame from the SOURCE reel remakes
-    // that person (My Model refs are dropped). Block the footgun.
-    if (fromClip && referenceUrl.trim() && !referenceVideoUrls.length) {
-      setError(
-        "Starting frame is set — that locks identity to THAT image (usually the reference reel’s person), so My Model is ignored and the output looks like the original. Clear Starting frame to generate with My Model, or only keep a frame that is already your model in the outfit."
-      );
-      return;
-    }
-
     // Snapshot so a second Generate mid-flight doesn't mix jobs.
     const jobModel = videoModel;
     const jobPrompt = prompt.trim();
@@ -680,23 +671,14 @@ export function VideoDock({
               From Prompt-from-video
             </p>
             <p className="mt-1">
-              The reference reel only taught the prompt. Generate here with{" "}
-              <strong>My Model</strong> selected and{" "}
-              <strong>Starting frame empty</strong> — otherwise Wan remakes the
-              source person and the result looks like the original video.
+              The reference reel only taught the prompt — it is not who should
+              appear.{" "}
+              <strong>Starting frame is good</strong> when it is a still of{" "}
+              <strong>My Model</strong> (your usual Image → Send to video
+              flow). Do <strong>not</strong> use a freeze-frame of the
+              influencer from the reference reel — that remakes their face and
+              looks like the original video.
             </p>
-            {referenceUrl.trim() ? (
-              <button
-                type="button"
-                className="mt-2 text-xs font-semibold text-primary underline-offset-2 hover:underline"
-                onClick={() => {
-                  setReferenceUrl("");
-                  setEndFrameUrl("");
-                }}
-              >
-                Clear starting frame now
-              </button>
-            ) : null}
           </div>
         ) : null}
 
@@ -868,7 +850,7 @@ export function VideoDock({
               ) : !referenceUrl ? (
                 <span className="text-xs text-muted-foreground">
                   {fromClip
-                    ? "Leave empty for My Model identity (prompt-from-video)"
+                    ? "Use your My Model still (Image → Send to video) — not a frame from the reference reel"
                     : videoModel?.supportsReferenceMedia
                       ? "Optional — or Send to video from Image Generation"
                       : "or Send to video from Image Generation"}
@@ -890,9 +872,9 @@ export function VideoDock({
               )}
             </div>
             {fromClip && referenceUrl.trim() ? (
-              <p className="text-[11px] text-accent-red">
-                This frame overrides My Model — clear it unless it is already
-                your model in the target outfit.
+              <p className="text-[11px] text-muted-foreground">
+                Starting frame locks face + outfit to this still. Confirm it is{" "}
+                <strong>My Model</strong>, not the reference reel’s person.
               </p>
             ) : null}
           </div>
