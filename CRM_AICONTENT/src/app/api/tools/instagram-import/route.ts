@@ -63,6 +63,19 @@ async function rehostMedia(
   return data.publicUrl;
 }
 
+function isDirectMediaUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    if (!/^https?:$/i.test(u.protocol)) return false;
+    return (
+      /\.(mp4|m3u8|mov|webm)(\?|$)/i.test(u.pathname + u.search) ||
+      /rapidcdn\.app|fbcdn\.net|cdninstagram\.com/i.test(u.hostname)
+    );
+  } catch {
+    return false;
+  }
+}
+
 export async function POST(request: Request) {
   try {
     const userId = await requireUserId();
@@ -73,9 +86,40 @@ export async function POST(request: Request) {
     const url = body.url?.trim();
     if (!url) {
       return NextResponse.json(
-        { ok: false, error: "Instagram URL is required" },
+        { ok: false, error: "Instagram URL or direct media URL is required" },
         { status: 400 }
       );
+    }
+
+    // FastDL / other downloaders: paste the direct MP4 link and we rehost it.
+    if (isDirectMediaUrl(url)) {
+      const isVideo = !/\.(jpg|jpeg|png|webp)(\?|$)/i.test(url);
+      const shortcode = `direct-${Date.now()}`;
+      const primary: InstagramMediaItem = {
+        type: isVideo ? "video" : "photo",
+        url,
+        thumbnail: null,
+      };
+      const hostedUrl =
+        body.rehost === false
+          ? null
+          : await rehostMedia(userId, primary, shortcode);
+      return NextResponse.json({
+        ok: true,
+        shortcode,
+        sourceUrl: url,
+        thumbnail: null,
+        items: [
+          {
+            type: primary.type,
+            url: hostedUrl || url,
+          },
+        ],
+        hostedUrl,
+        downloadUrl: hostedUrl || url,
+        mediaType: primary.type,
+        note: "Imported direct media URL into your workspace.",
+      });
     }
 
     const resolved = await resolveInstagramMedia(url);
