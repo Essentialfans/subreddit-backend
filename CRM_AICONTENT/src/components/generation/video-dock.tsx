@@ -271,6 +271,13 @@ export function VideoDock({
     endFrameUrl,
   ]);
 
+  // Enhance rewrites short prompts and can bury identity locks — off when @Video1 is on.
+  useEffect(() => {
+    if (referenceVideoUrls.length > 0 && enhance) {
+      setEnhance(false);
+    }
+  }, [referenceVideoUrls.length, enhance]);
+
   async function extractVoiceFromVideo(videoUrl: string) {
     setExtractingAudio(true);
     setError("");
@@ -568,6 +575,7 @@ export function VideoDock({
             ? jobReferenceAudioUrls
             : [],
           audioUrl: jobAudioUrl || null,
+          modelName: jobCreator?.name ?? null,
         }),
       });
       const created = await readApiJson<{
@@ -649,13 +657,9 @@ export function VideoDock({
                 <span className="text-sm">Generating video…</span>
               </div>
             ) : slot.state === "done" ? (
-              <div className="group relative h-full w-full">
-                <video
-                  src={slot.url}
-                  controls
-                  className="h-full w-full bg-black object-contain"
-                />
-                <div className="pointer-events-none absolute inset-x-0 bottom-14 z-10 flex flex-wrap justify-center gap-2 opacity-100">
+              <div className="gen-dock-video-frame group">
+                <video src={slot.url} controls playsInline />
+                <div className="pointer-events-none absolute inset-x-0 bottom-3 z-10 flex flex-wrap justify-center gap-2 opacity-100">
                   <button
                     type="button"
                     onClick={() =>
@@ -769,11 +773,11 @@ export function VideoDock({
               From Prompt-from-video
             </p>
             <p className="mt-1">
-              <strong>@Image1</strong> = My Model still (who appears).{" "}
-              <strong>@Video1</strong> = source reel for motion only (how she
-              moves — including back-to-camera bra/prop beats). We seal every
-              job so Wan must not copy the reel’s face. Do not use a freeze-frame
-              of the influencer as @Image1.
+              <strong>@Image1</strong> = who appears (My Model).{" "}
+              <strong>@Video1</strong> = motion guidance ONLY — never the woman
+              in that reel. Paste your full recreate prompt (not just “@Video1
+              reference video”). Enhance stays off with @Video1 so identity
+              locks aren’t rewritten.
             </p>
           </div>
         ) : null}
@@ -1063,7 +1067,7 @@ export function VideoDock({
               videoModel?.omitPrompt
                 ? "No prompt needed — motion comes from your reference video"
                 : videoModel?.supportsReferenceMedia
-                  ? "Describe the scene… tag @Image1 / @Video1 for refs"
+                  ? "Full scene prompt… @Image1 = who, @Video1 = motion only (not her face)"
                   : "Describe the motion… slow push-in, hair in wind, cinematic lights…"
             }
           />
@@ -1074,7 +1078,16 @@ export function VideoDock({
                 type="button"
                 className="gen-toggle"
                 data-on={enhance}
-                onClick={() => setEnhance((v) => !v)}
+                disabled={referenceVideoUrls.length > 0}
+                title={
+                  referenceVideoUrls.length > 0
+                    ? "Off while @Video1 is attached — keeps identity locks"
+                    : undefined
+                }
+                onClick={() => {
+                  if (referenceVideoUrls.length > 0) return;
+                  setEnhance((v) => !v);
+                }}
                 aria-label="Enhance with AI"
               />
             </div>

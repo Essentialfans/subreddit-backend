@@ -156,6 +156,36 @@ export function wanGentleVoiceRule(): string {
 }
 
 /**
+ * Server-side seal for Wan jobs with @Image + @Video.
+ * Runs on the API so a weak client prompt cannot copy the reel's woman.
+ */
+export function sealWanReferencePromptForApi(options: {
+  prompt: string;
+  modelName?: string | null;
+  aspect: string;
+  imageCount: number;
+  videoCount: number;
+  audioCount?: number;
+}): string {
+  const base = options.prompt.trim();
+  const seal = wanImageVideoRefSeal({
+    modelName: options.modelName,
+    aspect: options.aspect,
+    imageCount: Math.max(1, options.imageCount),
+    videoCount: options.videoCount,
+    audioCount: options.audioCount ?? 0,
+    prompt: base,
+  });
+  // Put seal first AND repeat the identity ban at the end so Enhance/weak
+  // prompts cannot bury it.
+  const tail =
+    `FINAL LOCK: The only person on screen is from @Image1 (My Model). ` +
+    `@Video1 is motion guidance only — do NOT show or recreate the woman from @Video1. ` +
+    `Output MUST be ${options.aspect}.`;
+  return `${seal}\n\n${base}\n\n${tail}`;
+}
+
+/**
  * Wan 3.0 reference_image_urls + reference_video_urls (+ optional audio) mode.
  * Image = who appears. Video = motion only. Audio = voice.
  */
