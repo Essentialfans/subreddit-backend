@@ -307,6 +307,11 @@ export function VideoDock({
   const showDuration = durationOptions.length > 0;
   const showResolution = resolutionOptions.length > 0;
 
+  /** Dense Prompt-from-video scripts — @Video1 of the source reel fights this. */
+  const looksLikeRecreateScript =
+    /\b00:\d{2}/.test(prompt) &&
+    /@Image1|reference images|My Model|presenter from/i.test(prompt);
+
   async function onGenerate() {
     setError("");
     if (!keyReady) {
@@ -335,6 +340,18 @@ export function VideoDock({
     }
     if (!videoModel.promptOptional && prompt.trim().length < 3) {
       setError("Add a short motion prompt.");
+      return;
+    }
+    // Prompting + source reel as @Video1: Wan copies that clip’s camera/framing
+    // (zoomed legs, wrong aspect) and ignores the timestamped recreate script.
+    if (
+      videoModel.supportsReferenceMedia &&
+      referenceVideoUrls.length > 0 &&
+      looksLikeRecreateScript
+    ) {
+      setError(
+        "Remove @Video1 (the reference reel). With a Prompt-from-video script, that clip overrides your prompt — Wan copies its framing (often zoomed / wide) instead of your 9:16 full-body beats. Keep only the My Model still (@Image1). Want the source motion baked in? Use the Motion control tab instead."
+      );
       return;
     }
     // Snapshot so a second Generate mid-flight doesn't mix jobs.
@@ -1043,47 +1060,57 @@ export function VideoDock({
                 />
               ) : (
                 <span className="text-xs text-muted-foreground">
-                  Optional — mp4/mov, 1–15s each, total ≤15s. Tag as @Video1…
-                  in the prompt. Cannot mix with start/end frame mode.
+                  Optional style/motion refs — not the Instagram reel you already
+                  turned into a prompt. Cannot mix with start/end frame mode.
                 </span>
               )}
             </div>
             {referenceVideoUrls.length ? (
-              <div className="flex flex-wrap items-center gap-2">
-                {referenceVideoUrls.map((url, i) => (
-                  <div
-                    key={`${url}-${i}`}
-                    className="flex items-center gap-2 rounded-full border border-border bg-muted px-3 py-1 text-xs"
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  {referenceVideoUrls.map((url, i) => (
+                    <div
+                      key={`${url}-${i}`}
+                      className="flex items-center gap-2 rounded-full border border-border bg-muted px-3 py-1 text-xs"
+                    >
+                      <span className="text-foreground">@Video{i + 1}</span>
+                      <a
+                        href={url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="max-w-[140px] truncate text-muted-foreground underline-offset-2 hover:underline"
+                      >
+                        clip
+                      </a>
+                      <button
+                        type="button"
+                        className="text-muted-foreground underline-offset-2 hover:underline"
+                        onClick={() =>
+                          setReferenceVideoUrls((prev) =>
+                            prev.filter((_, idx) => idx !== i)
+                          )
+                        }
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+                    onClick={() => setReferenceVideoUrls([])}
                   >
-                    <span className="text-foreground">@Video{i + 1}</span>
-                    <a
-                      href={url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="max-w-[140px] truncate text-muted-foreground underline-offset-2 hover:underline"
-                    >
-                      clip
-                    </a>
-                    <button
-                      type="button"
-                      className="text-muted-foreground underline-offset-2 hover:underline"
-                      onClick={() =>
-                        setReferenceVideoUrls((prev) =>
-                          prev.filter((_, idx) => idx !== i)
-                        )
-                      }
-                    >
-                      Remove
-                    </button>
-                  </div>
-                ))}
-                <button
-                  type="button"
-                  className="text-xs text-muted-foreground underline-offset-2 hover:underline"
-                  onClick={() => setReferenceVideoUrls([])}
-                >
-                  Clear all
-                </button>
+                    Clear all
+                  </button>
+                </div>
+                {looksLikeRecreateScript ? (
+                  <p className="text-[11px] text-accent-red">
+                    Your prompt already describes the whole clip. @Video1 will
+                    make Wan copy that reel’s camera (zoomed / wide) instead of
+                    your 9:16 full-body script — remove it, keep only the My
+                    Model still.
+                  </p>
+                ) : null}
               </div>
             ) : null}
           </div>
