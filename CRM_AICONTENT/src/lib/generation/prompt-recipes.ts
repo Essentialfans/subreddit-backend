@@ -88,6 +88,37 @@ export function videoNoTextRule(userText?: string): string {
   return "NO burned-in captions, meme text, subtitles, stickers, logos, or watermarks on the video. Do not recreate source overlay text like \"Wait for it…\". Clean plate — spoken dialogue is audio only, never on-screen text.";
 }
 
+/**
+ * Wan 3.0 reference_image_urls + reference_video_urls mode.
+ * Image = who appears. Video = motion/choreography only — never the person.
+ */
+export function wanImageVideoRefSeal(options: {
+  modelName?: string | null;
+  aspect: string;
+  imageCount: number;
+  videoCount: number;
+}): string {
+  const name = options.modelName?.trim() || "My Model";
+  const imgTag =
+    options.imageCount > 1
+      ? `@Image1…@Image${options.imageCount}`
+      : "@Image1";
+  const vidTag =
+    options.videoCount > 1
+      ? `@Video1…@Video${options.videoCount}`
+      : "@Video1";
+  return [
+    `REFERENCE SPLIT (CRITICAL):`,
+    `${imgTag} = identity + face + body + hair for ${name} ONLY. Match the person in those images.`,
+    `${vidTag} = motion / choreography / timing / camera path ONLY.`,
+    `NEVER copy the face, hair, body type, skin, age, or identity of anyone visible in ${vidTag}.`,
+    `If ${vidTag} shows a different woman, ignore her appearance completely — only reuse how she moves.`,
+    `Follow the written timestamped beats; use ${vidTag} to make that motion accurate (including back-to-camera bra/prop beats).`,
+    `Output aspect ratio MUST be ${options.aspect} (vertical story if 9:16). Do not inherit ${vidTag}'s crop, zoom, or landscape framing.`,
+    `Full-body framing as the prompt describes — do not zoom into feet/legs unless a beat says so.`,
+  ].join(" ");
+}
+
 /** Hard face keep-list — Seedream/Nano respond better to explicit preserve lists. */
 export function recreateFaceKeepList(name: string): string {
   return `KEEP from Image 1 (${name}) exactly: face geometry, eye shape/color, nose, lips, jawline, cheekbones, eyebrows, skin tone, freckles/moles, hair color, hair length, hair texture, age, and body proportions. Do not blend with the LAST image's face.`;

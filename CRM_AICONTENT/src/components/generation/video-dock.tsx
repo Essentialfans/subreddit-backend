@@ -32,7 +32,10 @@ import type { CreatorModel } from "@/lib/models/types";
 import { RATIO_OPTIONS } from "@/lib/generation/presets";
 import { uploadGenerationFile } from "@/lib/generation/upload-client";
 import { ensureStillFitsModel } from "@/lib/generation/prepare-media";
-import { videoNoTextRule } from "@/lib/generation/prompt-recipes";
+import {
+  videoNoTextRule,
+  wanImageVideoRefSeal,
+} from "@/lib/generation/prompt-recipes";
 import { saveOutputToGallery } from "@/lib/outputs/client";
 import { UploadProgressBar } from "@/components/generation/upload-progress";
 import "./generate-dock.css";
@@ -342,15 +345,13 @@ export function VideoDock({
       setError("Add a short motion prompt.");
       return;
     }
-    // Prompting + source reel as @Video1: Wan copies that clip’s camera/framing
-    // (zoomed legs, wrong aspect) and ignores the timestamped recreate script.
     if (
       videoModel.supportsReferenceMedia &&
       referenceVideoUrls.length > 0 &&
-      looksLikeRecreateScript
+      !referenceUrl.trim()
     ) {
       setError(
-        "Remove @Video1 (the reference reel). With a Prompt-from-video script, that clip overrides your prompt — Wan copies its framing (often zoomed / wide) instead of your 9:16 full-body beats. Keep only the My Model still (@Image1). Want the source motion baked in? Use the Motion control tab instead."
+        "Add your My Model still (@Image1) before @Video1 — without it Wan may copy the person from the reference reel."
       );
       return;
     }
@@ -384,6 +385,12 @@ export function VideoDock({
       // Wan Animate Move has no prompt field — skip enhance/identity text.
       const acceptsPrompt = !jobModel.omitPrompt;
       const hasStartingFrame = Boolean(jobReferenceUrl.trim());
+      const hasRefVideos = jobReferenceVideoUrls.length > 0;
+      // Wan: image+video refs → reference_* mode (not first_frame).
+      const useImageVideoRefs =
+        Boolean(jobModel.supportsReferenceMedia) &&
+        hasRefVideos &&
+        hasStartingFrame;
 
       if (acceptsPrompt && jobEnhance) {
         const enhanceRes = await fetch("/api/generation/enhance", {
@@ -398,7 +405,11 @@ export function VideoDock({
             hasImage: hasStartingFrame,
             durationSec: jobShowDuration ? jobDuration : null,
             aspect: jobRatio,
-            refLabels: hasStartingFrame ? ["starting-frame"] : [],
+            refLabels: useImageVideoRefs
+              ? ["@Image1-identity", "@Video1-motion-only"]
+              : hasStartingFrame
+                ? ["starting-frame"]
+                : [],
           }),
         });
         const enhanceJson = await readApiJson<{
@@ -414,25 +425,6 @@ export function VideoDock({
         }
       } else if (!acceptsPrompt) {
         finalPrompt = "";
-      }
-
-      // Starting frame = the video. Keep outfit/look/scene unless the prompt says otherwise.
-      // Never keep burned-in captions / meme overlays from that frame.
-      if (acceptsPrompt && hasStartingFrame) {
-        finalPrompt = [
-          `STARTING FRAME LOCK: Animate the attached starting-frame image into video.`,
-          `Keep the same person, face, hair, body, clothing/outfit, colors, and background from that starting frame.`,
-          `Do NOT change clothes, identity, or restyle the subject unless the user prompt explicitly asks for it.`,
-          `Do NOT keep or recreate burned-in captions, meme text, subtitles, stickers, or watermarks from the starting frame — clean video, no on-screen text.`,
-          `Only add motion / camera as described. Output aspect ratio ${jobRatio}.`,
-          finalPrompt,
-          videoNoTextRule(finalPrompt),
-        ].join(" ");
-      } else if (acceptsPrompt && jobCreator?.name) {
-        // No starting frame — My Model can guide appearance.
-        finalPrompt = `${finalPrompt} Featuring ${jobCreator.name}, matching My Models reference identity. ${videoNoTextRule(finalPrompt)}`;
-      } else if (acceptsPrompt) {
-        finalPrompt = `${finalPrompt} ${videoNoTextRule(finalPrompt)}`;
       }
 
       // Motion-control / i2v: the inserted still is the character + outfit source of truth.
@@ -451,20 +443,57 @@ export function VideoDock({
         }
       }
 
-      // With a starting frame: send ONLY that frame (Wan first_frame / motion still).
-      // Do not attach My Models refs here — they were overwriting the frame's outfit.
-      // Without a starting frame: fall back to My Models identity images.
       const identityUrls = [
         ...(jobCreator?.coverUrl ? [jobCreator.coverUrl] : []),
         ...(jobCreator?.refs.map((r) => r.publicUrl) ?? []),
       ].filter((url, i, arr) => Boolean(url) && arr.indexOf(url) === i);
-      const imageUrls = jobModel.requiresMotionVideo
-        ? stillUrl
-          ? [stillUrl]
-          : []
-        : stillUrl
-          ? [stillUrl]
-          : identityUrls;
+
+      // Image+video ref mode: still first (outfit+identity), then extra My Model
+      // face refs so Wan doesn't fall back to the person in @Video1.
+      let imageUrls: string[];
+      if (jobModel.requiresMotionVideo) {
+        imageUrls = stillUrl ? [stillUrl] : [];
+      } else if (useImageVideoRefs && stillUrl) {
+        const extraId = identityUrls
+          .filter((u) => u !== stillUrl)
+          .slice(0, 2);
+        imageUrls = [stillUrl, ...extraId];
+      } else if (stillUrl) {
+        // first_frame path — only the still (extra My Model refs were overwriting outfit)
+        imageUrls = [stillUrl];
+      } else {
+        imageUrls = identityUrls;
+      }
+
+      if (acceptsPrompt && useImageVideoRefs) {
+        // @Image1 = who. @Video1 = how they move. Never copy the reel's person.
+        finalPrompt = [
+          wanImageVideoRefSeal({
+            modelName: jobCreator?.name,
+            aspect: jobRatio,
+            imageCount: imageUrls.length,
+            videoCount: jobReferenceVideoUrls.length,
+          }),
+          finalPrompt,
+          videoNoTextRule(finalPrompt),
+        ].join(" ");
+      } else if (acceptsPrompt && hasStartingFrame) {
+        // Pure first-frame / still→video — no reference clips.
+        finalPrompt = [
+          `STARTING FRAME LOCK: Animate the attached starting-frame image into video.`,
+          `Keep the same person, face, hair, body, clothing/outfit, colors, and background from that starting frame.`,
+          `Do NOT change clothes, identity, or restyle the subject unless the user prompt explicitly asks for it.`,
+          `Do NOT keep or recreate burned-in captions, meme text, subtitles, stickers, or watermarks from the starting frame — clean video, no on-screen text.`,
+          `Only add motion / camera as described. Output aspect ratio ${jobRatio}.`,
+          finalPrompt,
+          videoNoTextRule(finalPrompt),
+        ].join(" ");
+      } else if (acceptsPrompt && jobCreator?.name) {
+        // No starting frame — My Model can guide appearance.
+        finalPrompt = `${finalPrompt} Featuring ${jobCreator.name}, matching My Models reference identity. ${videoNoTextRule(finalPrompt)}`;
+      } else if (acceptsPrompt) {
+        finalPrompt = `${finalPrompt} ${videoNoTextRule(finalPrompt)}`;
+      }
 
       const createRes = await fetch("/api/generation/create", {
         method: "POST",
@@ -688,13 +717,11 @@ export function VideoDock({
               From Prompt-from-video
             </p>
             <p className="mt-1">
-              The reference reel only taught the prompt — it is not who should
-              appear.{" "}
-              <strong>Starting frame is good</strong> when it is a still of{" "}
-              <strong>My Model</strong> (your usual Image → Send to video
-              flow). Do <strong>not</strong> use a freeze-frame of the
-              influencer from the reference reel — that remakes their face and
-              looks like the original video.
+              <strong>@Image1</strong> = My Model still (who appears).{" "}
+              <strong>@Video1</strong> = source reel for motion only (how she
+              moves — including back-to-camera bra/prop beats). We seal every
+              job so Wan must not copy the reel’s face. Do not use a freeze-frame
+              of the influencer as @Image1.
             </p>
           </div>
         ) : null}
@@ -1060,8 +1087,8 @@ export function VideoDock({
                 />
               ) : (
                 <span className="text-xs text-muted-foreground">
-                  Optional style/motion refs — not the Instagram reel you already
-                  turned into a prompt. Cannot mix with start/end frame mode.
+                  Motion/choreography only — identity stays on @Image1 (My
+                  Model). Cannot mix with start/end frame mode.
                 </span>
               )}
             </div>
@@ -1104,11 +1131,9 @@ export function VideoDock({
                   </button>
                 </div>
                 {looksLikeRecreateScript ? (
-                  <p className="text-[11px] text-accent-red">
-                    Your prompt already describes the whole clip. @Video1 will
-                    make Wan copy that reel’s camera (zoomed / wide) instead of
-                    your 9:16 full-body script — remove it, keep only the My
-                    Model still.
+                  <p className="text-[11px] text-muted-foreground">
+                    @Video1 = motion only. Keep the My Model still attached —
+                    we seal the job so Wan must not copy the reel’s face.
                   </p>
                 ) : null}
               </div>
