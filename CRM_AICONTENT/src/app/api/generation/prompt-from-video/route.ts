@@ -12,6 +12,7 @@ export async function POST(request: Request) {
     const body = (await request.json()) as {
       sourceVideoUrl?: string;
       keyframeUrls?: string[];
+      keyframeTimesSec?: number[];
       creatorId?: string;
       modelName?: string;
       llm?: string;
@@ -48,13 +49,21 @@ export async function POST(request: Request) {
       );
     }
 
-    const keyframeUrls = [...new Set((body.keyframeUrls ?? []).filter(Boolean))];
+    // Keep order — dense timeline must stay chronological (do not Set-dedupe).
+    const keyframeUrls = (body.keyframeUrls ?? []).filter(Boolean);
     if (keyframeUrls.length < 1) {
       return NextResponse.json(
         {
           ok: false,
-          error: "Upload the clip and wait for keyframes to extract (need ≥1).",
+          error:
+            "Upload the clip and wait for the full-timeline frames to finish extracting.",
         },
+        { status: 400 }
+      );
+    }
+    if (keyframeUrls.length > 60) {
+      return NextResponse.json(
+        { ok: false, error: "Too many keyframes (max 60)." },
         { status: 400 }
       );
     }
@@ -64,6 +73,10 @@ export async function POST(request: Request) {
 
     const apiKey = await loadKieApiKey(userId);
 
+    const keyframeTimesSec = (body.keyframeTimesSec ?? [])
+      .map((t) => Number(t))
+      .filter((t) => Number.isFinite(t) && t >= 0);
+
     const result = await buildPromptFromVideo({
       apiKey,
       llm: llmOpt.id as PromptLlmId,
@@ -72,6 +85,7 @@ export async function POST(request: Request) {
       videoModelLabel: videoModel?.label ?? "Wan 3.0",
       lookAlike: Boolean(body.lookAlike),
       keyframeUrls,
+      keyframeTimesSec,
       durationSec: body.durationSec ?? null,
       aspect: body.aspect ?? "9:16",
     });
