@@ -67,6 +67,11 @@ export const navigation: NavSection[] = [
     title: "VIDEO GENERATION",
     items: [
       { label: "Video Generation", href: "/video/single", icon: Video },
+      {
+        label: "Prompt from video",
+        href: "/video/prompt-from-clip",
+        icon: ScrollText,
+      },
       { label: "Batch Video Generation", href: "/video/batch", icon: Film },
       { label: "LTX Video Generation", href: "/video/ltx", icon: Clapperboard },
       {
