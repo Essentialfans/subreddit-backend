@@ -7,7 +7,10 @@ export const VIDEO_RECREATE_RECIPE_ID = "wan-recreate-identity";
 const EXPOSURE_RE =
   /\b(bare|butt|buttock|ass|cheek|lift|pulled\s*up|hike|slit\s*open|expos|flash|nude|naked|no\s*panty|without\s*pant|underwear|thong|breast|nipple|crotch|side\s*angle)\b/i;
 
-const INVENTORY_BATCH = 6;
+/** Frames per inventory vision call. Larger = fewer round-trips. */
+const INVENTORY_BATCH = 8;
+/** How many inventory batches to run at once (kie rate-limit friendly). */
+const INVENTORY_CONCURRENCY = 3;
 
 function formatMmSs(sec: number): string {
   const s = Math.max(0, sec);
@@ -193,34 +196,53 @@ async function inventoryKeyframesBatched(options: {
 }): Promise<string> {
   const urls = options.keyframeUrls;
   const times = options.keyframeTimesSec ?? urls.map((_, i) => i);
-  const allLines: string[] = [];
 
+  const starts: number[] = [];
   for (let start = 0; start < urls.length; start += INVENTORY_BATCH) {
-    const batchUrls = urls.slice(start, start + INVENTORY_BATCH);
-    const batchTimes = times.slice(start, start + INVENTORY_BATCH);
-    const mapping = batchTimes
-      .map(
-        (t, i) =>
-          `Attached image ${i + 1} = FRAME ${start + i + 1} @ ${formatMmSs(t)}`
-      )
-      .join("\n");
+    starts.push(start);
+  }
 
-    const text = await runPromptLlm({
-      llm: options.llm,
-      apiKey: options.apiKey,
-      system: buildInventorySystemPrompt(),
-      userText: `Inventory this batch of a dense full-clip timeline.
+  // Parallel inventory waves — was fully serial and made Generate feel stuck.
+  const results: string[][] = new Array(starts.length);
+  let cursor = 0;
+
+  async function worker() {
+    while (cursor < starts.length) {
+      const batchIndex = cursor++;
+      const start = starts[batchIndex];
+      const batchUrls = urls.slice(start, start + INVENTORY_BATCH);
+      const batchTimes = times.slice(start, start + INVENTORY_BATCH);
+      const mapping = batchTimes
+        .map(
+          (t, i) =>
+            `Attached image ${i + 1} = FRAME ${start + i + 1} @ ${formatMmSs(t)}`
+        )
+        .join("\n");
+
+      const text = await runPromptLlm({
+        llm: options.llm,
+        apiKey: options.apiKey,
+        system: buildInventorySystemPrompt(),
+        userText: `Inventory this batch of a dense full-clip timeline.
 
 ${mapping}
 
 Output one FRAME line per image using the GLOBAL frame numbers and timestamps above. Be explicit about clothing lifts / bare skin / pose changes.`,
-      imageUrls: batchUrls,
-    });
+        imageUrls: batchUrls,
+      });
 
-    allLines.push(...renumberFrameLines(text, start, batchTimes));
+      results[batchIndex] = renumberFrameLines(text, start, batchTimes);
+    }
   }
 
-  return allLines.join("\n");
+  await Promise.all(
+    Array.from(
+      { length: Math.min(INVENTORY_CONCURRENCY, starts.length) },
+      () => worker()
+    )
+  );
+
+  return results.flat().join("\n");
 }
 
 function pickVisionUrls(
@@ -296,26 +318,30 @@ export async function buildPromptFromVideo(options: {
   note: string;
   frameCount: number;
 }> {
-  let transcript = "";
-  try {
-    const asr = await transcribeMediaUrl({
+  // ASR + inventory in parallel — previously serial (ASR up to minutes, then
+  // 4–6 vision inventory calls), which made Generate feel stuck for ages.
+  const [transcript, inventory] = await Promise.all([
+    (async () => {
+      try {
+        const asr = await transcribeMediaUrl({
+          apiKey: options.apiKey,
+          mediaUrl: options.sourceVideoUrl,
+          withTimestamps: true,
+        });
+        return asr.transcript;
+      } catch (err) {
+        return `(ASR unavailable: ${
+          err instanceof Error ? err.message : "unknown error"
+        }. Infer spoken lines carefully from keyframes/context; mark uncertain dialogue.)`;
+      }
+    })(),
+    inventoryKeyframesBatched({
       apiKey: options.apiKey,
-      mediaUrl: options.sourceVideoUrl,
-      withTimestamps: true,
-    });
-    transcript = asr.transcript;
-  } catch (err) {
-    transcript = `(ASR unavailable: ${
-      err instanceof Error ? err.message : "unknown error"
-    }. Infer spoken lines carefully from keyframes/context; mark uncertain dialogue.)`;
-  }
-
-  const inventory = await inventoryKeyframesBatched({
-    apiKey: options.apiKey,
-    llm: options.llm,
-    keyframeUrls: options.keyframeUrls,
-    keyframeTimesSec: options.keyframeTimesSec,
-  });
+      llm: options.llm,
+      keyframeUrls: options.keyframeUrls,
+      keyframeTimesSec: options.keyframeTimesSec,
+    }),
+  ]);
 
   const visionUrls = pickVisionUrls(
     options.keyframeUrls,

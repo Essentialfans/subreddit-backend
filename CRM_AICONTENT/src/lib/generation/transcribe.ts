@@ -18,7 +18,8 @@ export async function transcribeMediaUrl(options: {
   });
 
   const started = Date.now();
-  while (Date.now() - started < 4 * 60 * 1000) {
+  // Reels are short — don't block prompt gen for up to 4 minutes on ASR.
+  while (Date.now() - started < 90_000) {
     const info = await getKieTask(options.apiKey, taskId);
     if (/fail|error/.test(info.state)) {
       throw new Error(info.failMsg || "Transcription failed");
@@ -30,7 +31,7 @@ export async function transcribeMediaUrl(options: {
       }
       return { transcript: transcript.trim(), raw: info.raw };
     }
-    await new Promise((r) => setTimeout(r, 2500));
+    await new Promise((r) => setTimeout(r, 1500));
   }
   throw new Error("Transcription timed out");
 }
