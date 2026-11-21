@@ -53,6 +53,7 @@ export function PromptFromVideoPanel({
   const [prepareStatus, setPrepareStatus] = useState("");
 
   const [busy, setBusy] = useState(false);
+  const [busyStatus, setBusyStatus] = useState("");
   const [error, setError] = useState("");
   const [prompt, setPrompt] = useState("");
   const [transcript, setTranscript] = useState("");
@@ -113,8 +114,9 @@ export function PromptFromVideoPanel({
     setPrepareStatus("Capturing full-timeline frames…");
     try {
       const extractPromise = extractKeyframesFromVideoFile(file, {
-        intervalSec: 0.4,
-        maxFrames: 36,
+        // ~every 0.45s, capped at 24 — dense enough for beat copy, far fewer LLM rounds
+        intervalSec: 0.45,
+        maxFrames: 24,
         onProgress: (done, total) => {
           setPrepareStatus(`Capturing frames ${done}/${total}…`);
         },
@@ -218,6 +220,12 @@ export function PromptFromVideoPanel({
     }
 
     setBusy(true);
+    setBusyStatus(
+      `Transcribing + inventorying ${keyframeUrls.length} frames in parallel…`
+    );
+    const statusTimer = window.setTimeout(() => {
+      setBusyStatus("Writing full Wan narrative prompt…");
+    }, 25_000);
     try {
       const res = await fetch("/api/generation/prompt-from-video", {
         method: "POST",
@@ -257,6 +265,8 @@ export function PromptFromVideoPanel({
     } catch (err) {
       setError(err instanceof Error ? err.message : "Prompt generation failed");
     } finally {
+      window.clearTimeout(statusTimer);
+      setBusyStatus("");
       setBusy(false);
     }
   }
@@ -349,7 +359,7 @@ export function PromptFromVideoPanel({
             {durationSec ? (
               <p className="text-xs text-muted-foreground">
                 Duration ~{durationSec.toFixed(1)}s · {keyframeUrls.length}{" "}
-                full-timeline frames (~every 0.3s)
+                full-timeline frames (~every 0.45s)
               </p>
             ) : null}
             {keyframeUrls.length ? (
@@ -569,10 +579,14 @@ export function PromptFromVideoPanel({
             )}
             Generate prompt
           </button>
-          <p className="text-[11px] text-muted-foreground">
-            Inventories the full frame grid in batches — takes longer, but keeps
-            every action beat (use Grok 4.7).
-          </p>
+          {busyStatus ? (
+            <p className="text-xs text-muted-foreground">{busyStatus}</p>
+          ) : (
+            <p className="text-[11px] text-muted-foreground">
+              Transcribes + inventories frames in parallel (use Grok 4.7 for
+              adult beats). Usually under a couple minutes.
+            </p>
+          )}
 
           {error ? <p className="text-sm text-accent-red">{error}</p> : null}
           {keyReady === false ? (

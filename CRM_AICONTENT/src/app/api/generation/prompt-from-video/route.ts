@@ -5,6 +5,8 @@ import { findModel } from "@/lib/kie/models";
 import { buildPromptFromVideo } from "@/lib/generation/prompt-from-video";
 
 export const runtime = "nodejs";
+/** Inventory + ASR + Wan rewrite — allow Fluid Compute to finish the full pass. */
+export const maxDuration = 300;
 
 export async function POST(request: Request) {
   try {
