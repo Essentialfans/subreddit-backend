@@ -37,6 +37,7 @@ import {
 } from "@/lib/generation/presets";
 import { parseAtMentions } from "@/lib/generation/prompt";
 import { uploadGenerationFile } from "@/lib/generation/upload-client";
+import { scrubSourceFacesForRecreate } from "@/lib/generation/prepare-media";
 import { saveOutputToGallery } from "@/lib/outputs/client";
 import { UploadProgressBar } from "@/components/generation/upload-progress";
 import "./generate-dock.css";
@@ -331,15 +332,62 @@ export function GenerateDock({
 
     try {
       const hasSource = jobMode === "recreate" && Boolean(jobSourceUrl.trim());
-      const identityUrls = jobCreator?.refs.map((r) => r.publicUrl) ?? [];
       const activeGenId =
         jobMode === "presets" ? jobPresetQuality : jobGenModelId;
-      // Seedream i2i edits image_urls[0] — put SOURCE first so we edit the scene,
-      // then identity refs. Nano Banana prefers identity refs first.
-      const seedreamSourceFirst = activeGenId.startsWith("seedream");
-      const recreateImageOrder = seedreamSourceFirst
-        ? "source-first"
-        : "identity-first";
+      const isNano = activeGenId.startsWith("nano-banana");
+
+      // Person-swap works best with few images: Image1 = My Model face, last = SOURCE.
+      // Too many refs (old Image6 pattern) lets the SOURCE woman win.
+      const uniqueIdentity = [
+        ...(jobCreator?.coverUrl ? [jobCreator.coverUrl] : []),
+        ...(jobCreator?.refs.map((r) => r.publicUrl) ?? []),
+      ].filter((url, i, arr) => Boolean(url) && arr.indexOf(url) === i);
+      const primaryIdentity = uniqueIdentity[0];
+      const secondaryIdentity = uniqueIdentity.find((u) => u !== primaryIdentity);
+      // Nano: 1 identity (+ optional 2nd). Seedream: up to 2 identity. Never dump all refs.
+      const identityUrls = primaryIdentity
+        ? isNano
+          ? secondaryIdentity
+            ? [primaryIdentity, secondaryIdentity]
+            : [primaryIdentity]
+          : secondaryIdentity
+            ? [primaryIdentity, secondaryIdentity]
+            : [primaryIdentity]
+        : [];
+
+      // Scrub SOURCE face so the model cannot copy it — pose/outfit/scene stay.
+      let scrubbedSourceUrl = jobSourceUrl.trim();
+      if (jobMode === "recreate" && scrubbedSourceUrl) {
+        try {
+          const scrubbed = await scrubSourceFacesForRecreate(scrubbedSourceUrl);
+          scrubbedSourceUrl = await uploadGenerationFile(
+            new File([scrubbed], "source-face-scrubbed.jpg", {
+              type: "image/jpeg",
+            })
+          );
+        } catch {
+          // If scrub fails (CORS etc.), still continue — prompt + short list remain.
+        }
+      }
+
+      const clothingUrls =
+        jobMode === "recreate" &&
+        jobClothing === "external" &&
+        jobExternalClothingUrl.trim()
+          ? [jobExternalClothingUrl.trim()]
+          : [];
+
+      // Recreate: identity first, SOURCE last. Skip extraRefs on recreate (they dilute).
+      const imageUrls =
+        jobMode === "recreate"
+          ? [...identityUrls, ...clothingUrls, scrubbedSourceUrl].filter(
+              Boolean
+            )
+          : [...identityUrls, ...jobExtraRefs];
+      const identityRefCount = identityUrls.length;
+      const sourceImageIndex =
+        jobMode === "recreate" && hasSource ? imageUrls.length : undefined;
+      const recreateImageOrder = "identity-first" as const;
       const enhanceRes = await fetch("/api/generation/enhance", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -349,7 +397,9 @@ export function GenerateDock({
           modelName: jobCreator?.name,
           modelId: activeGenId,
           presetHint: jobMode === "presets" ? preset?.promptHint : undefined,
-          enhanceWithAi: jobEnhance || jobMode !== "free",
+          // Recreate uses locked person-swap prompt server-side (ignore toggle).
+          enhanceWithAi:
+            jobMode === "recreate" ? false : jobEnhance || jobMode !== "free",
           hasImage: Boolean(
             hasSource || identityUrls.length > 0 || jobExtraRefs.length > 0
           ),
@@ -359,6 +409,8 @@ export function GenerateDock({
           refLabels,
           keepPose: jobKeepPose,
           recreateImageOrder,
+          identityRefCount,
+          sourceImageIndex,
         }),
       });
       const enhanceJson = (await enhanceRes.json()) as {
@@ -370,30 +422,6 @@ export function GenerateDock({
         throw new Error(enhanceJson.error || "Prompt expand failed");
       }
       setExpandedPrompt(enhanceJson.prompt);
-
-      const clothingUrls =
-        jobClothing === "external" && jobExternalClothingUrl.trim()
-          ? [jobExternalClothingUrl.trim()]
-          : [];
-      // Recreate image order:
-      // - Seedream: SOURCE first (edit canvas), then identity (+ clothing)
-      // - Others: identity first, SOURCE last (pose/scene only)
-      const imageUrls =
-        jobMode === "recreate"
-          ? seedreamSourceFirst
-            ? [
-                jobSourceUrl.trim(),
-                ...identityUrls,
-                ...jobExtraRefs,
-                ...clothingUrls,
-              ].filter(Boolean)
-            : [
-                ...identityUrls,
-                ...jobExtraRefs,
-                ...clothingUrls,
-                jobSourceUrl.trim(),
-              ].filter(Boolean)
-          : [...identityUrls, ...jobExtraRefs];
 
       const selectedModelId =
         jobMode === "presets" ? jobPresetQuality : jobGenModelId;
@@ -746,16 +774,14 @@ export function GenerateDock({
                 ))}
               </div>
               <p className="max-w-[240px] text-[10px] leading-snug text-muted-foreground">
-                Body always from My Model (never the source woman). Clothing
-                picks outfit only
+                Selected My Model = the face (always). Source upload = pose /
+                scene / outfit only — we scrub the source face before generate
+                so it cannot win. Clothing picks outfit only
                 {clothing === "source"
                   ? " (keep source outfit on model body)."
                   : clothing === "external"
                     ? " (upload outfit ref)."
-                    : " (use model’s usual look)."}{" "}
-                Captions/text on the source are removed. On Seedream, Keep pose
-                + Source clothing can still stick to the source face — retry if
-                needed, or try Nano Banana Pro for stronger identity swaps.
+                    : " (use model’s usual look)."}
               </p>
             </div>
           ) : null}

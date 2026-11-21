@@ -1,6 +1,7 @@
 import {
   clothingInstruction,
   getPromptRecipe,
+  recreateFaceKeepList,
   recreateFallback,
   recreateNoTextRule,
   type ClothingMode,
@@ -23,8 +24,12 @@ export interface PromptBuildInput {
   clothing?: ClothingMode | null;
   durationSec?: number | null;
   aspect?: string | null;
-  /** Seedream prefers source-first; Nano prefers identity-first */
+  /** Recreate always uses identity-first (My Model = image_urls[0]). */
   recreateImageOrder?: "identity-first" | "source-first";
+  /** How many leading image_urls are My Model identity refs */
+  identityRefCount?: number;
+  /** 1-based index of the SOURCE image in image_urls */
+  sourceImageIndex?: number;
   /** User's kie.ai key — required for live LLM enhance */
   kieApiKey?: string | null;
 }
@@ -50,6 +55,8 @@ function recipeContext(input: PromptBuildInput): RecipeContext {
     mode: input.mode,
     clothing: input.clothing,
     recreateImageOrder: input.recreateImageOrder,
+    identityRefCount: input.identityRefCount,
+    sourceImageIndex: input.sourceImageIndex,
   };
 }
 
@@ -72,11 +79,11 @@ function buildUserMessage(input: PromptBuildInput, formulaName: string): string 
   if (input.mode === "recreate" || input.hasSourceImage) {
     if (input.recreateImageOrder === "source-first") {
       bits.push(
-        "RECREATE MODE (Seedream source-first): Image 1 is SOURCE (pose/scene). Images 2+ are My Model identity (face+body). REPLACE the woman in Image 1 with the My Model from Images 2+."
+        "RECREATE MODE (legacy source-first): Image 1 is SOURCE (pose/scene). Images 2+ are My Model identity (face+body). REPLACE the woman in Image 1 with the My Model from Images 2+."
       );
     } else {
       bits.push(
-        "RECREATE MODE (identity-first): The FIRST images are My Model identity refs — use that person's FULL body and face (age, hair, physique, proportions). The LAST image is the SOURCE for pose, camera, scene, and background ONLY."
+        "RECREATE MODE (identity-first / priority): Images 1+ are My Model identity — KEEP that exact face and full body as the edit canvas. The LAST image is SOURCE for pose, camera, scene, and background ONLY — ignore the SOURCE woman's face and body."
       );
     }
     bits.push(
@@ -128,11 +135,13 @@ function sealIdentity(prompt: string, ctx: RecipeContext): string {
 
   const parts: string[] = [];
   if (isRecreate && name) {
+    const sourceIndex = ctx.sourceImageIndex ?? (ctx.identityRefCount ?? 1) + 1;
     parts.push(
       ctx.recreateImageOrder === "source-first"
-        ? `Identity-first recreate: Image 1 is SOURCE to edit; Images 2+ are ${name}. Replace the SOURCE woman with ${name}'s full body and face — do NOT keep the SOURCE woman's face or body.`
-        : `Identity-first recreate: the primary woman must be ${name}'s full body and face from the My Model identity refs — do NOT keep the SOURCE woman's face, body, age, or figure. SOURCE supplies pose/scene only.`
+        ? `Identity priority: Images 2+ are ${name}. Replace the Image-1 SOURCE woman with ${name}'s full body and face — do NOT keep the SOURCE woman's face or body.`
+        : `Identity priority: Image1 is ${name} (KEEP face+hair+body). Image${sourceIndex} is SOURCE pose/scene only — put ${name} into that pose; do NOT keep Image${sourceIndex}'s face, hair, body, age, or figure.`
     );
+    parts.push(recreateFaceKeepList(name));
   } else if (name) {
     parts.push(
       ctx.hasImage
@@ -147,11 +156,19 @@ function sealIdentity(prompt: string, ctx: RecipeContext): string {
   // Drop a weak prior lock if we're about to re-seal harder rules.
   const withoutDup = trimmed
     .replace(/Identity-first recreate:[^.]*\./gi, " ")
+    .replace(/Identity priority:[^.]*\./gi, " ")
+    .replace(/KEEP from Image 1[^.]*\./gi, " ")
     .replace(/NO text in the output:[^.]*\./gi, " ")
     .replace(/\s+/g, " ")
     .trim();
 
-  return `${parts.join(" ")} ${withoutDup}`.replace(/\s+/g, " ").trim();
+  // Face lock at BOTH ends — models often attend to the final sentence.
+  const head = parts.join(" ");
+  const tail =
+    isRecreate && name
+      ? `Final check: output face must match Image1 (${name}), not the SOURCE woman.`
+      : "";
+  return `${head} ${withoutDup} ${tail}`.replace(/\s+/g, " ").trim();
 }
 
 /**
@@ -167,10 +184,20 @@ export async function enhancePrompt(
   const text = input.userText.trim();
   const isRecreate = input.mode === "recreate" || Boolean(input.hasSourceImage);
 
+  // Recreate: always use the deterministic identity-lock prompt.
+  // LLM rewrite was softening face rules and letting SOURCE features win.
+  if (isRecreate) {
+    return {
+      prompt: sealIdentity(recreateFallback(text, ctx), ctx),
+      provider: "passthrough",
+      recipeId: recipe.id,
+      formulaName: recipe.formulaName,
+      note: "Recreate uses locked identity recipe (no LLM rewrite).",
+    };
+  }
+
   if (!input.enhanceWithAi) {
-    const base = isRecreate
-      ? recreateFallback(text, ctx)
-      : text || recipe.fallbackExpand("", ctx);
+    const base = text || recipe.fallbackExpand("", ctx);
     return {
       prompt: sealIdentity(base, ctx),
       provider: "passthrough",
@@ -183,11 +210,7 @@ export async function enhancePrompt(
     try {
       const raw = await kieChatComplete({
         apiKey: input.kieApiKey,
-        system: isRecreate
-          ? `${recipe.systemPrompt}
-
-RECREATE OVERRIDE (identity-first): Identity reference images define the FULL person (face + body shape + age + proportions). The SOURCE image is only for pose, camera, scene, and background. Never keep the SOURCE woman's face or body. If multiple people are in SOURCE, replace the primary/left woman with the named My Model; follow Extra direction for anyone else. Always strip ALL text, captions, overlays, watermarks, and speech bubbles from the SOURCE — output must have zero typography. Generate a NEW photo, not a light edit of SOURCE.`
-          : recipe.systemPrompt,
+        system: recipe.systemPrompt,
         user: buildUserMessage(input, recipe.formulaName),
       });
       return {
@@ -200,9 +223,7 @@ RECREATE OVERRIDE (identity-first): Identity reference images define the FULL pe
     } catch (err) {
       const message = err instanceof Error ? err.message : "Enhancer failed";
       return {
-        prompt: isRecreate
-          ? recreateFallback(text, ctx)
-          : recipe.fallbackExpand(text, ctx),
+        prompt: recipe.fallbackExpand(text, ctx),
         provider: "recipe-fallback",
         recipeId: recipe.id,
         formulaName: recipe.formulaName,
@@ -212,9 +233,7 @@ RECREATE OVERRIDE (identity-first): Identity reference images define the FULL pe
   }
 
   return {
-    prompt: isRecreate
-      ? recreateFallback(text, ctx)
-      : recipe.fallbackExpand(text, ctx),
+    prompt: recipe.fallbackExpand(text, ctx),
     provider: "recipe-fallback",
     recipeId: recipe.id,
     formulaName: recipe.formulaName,
