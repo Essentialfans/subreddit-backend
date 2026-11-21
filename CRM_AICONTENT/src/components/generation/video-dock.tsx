@@ -35,6 +35,7 @@ import { ensureStillFitsModel } from "@/lib/generation/prepare-media";
 import {
   videoNoTextRule,
   wanNaturalSpeechRule,
+  bindWanNarrativeToImage1,
   wanImageVideoRefSeal,
 } from "@/lib/generation/prompt-recipes";
 import { saveOutputToGallery } from "@/lib/outputs/client";
@@ -396,10 +397,11 @@ export function VideoDock({
     if (
       videoModel.supportsReferenceMedia &&
       referenceVideoUrls.length > 0 &&
-      !referenceUrl.trim()
+      !referenceUrl.trim() &&
+      !(creator?.coverUrl || (creator?.refs?.length ?? 0) > 0)
     ) {
       setError(
-        "Add your My Model still (@Image1) before @Video1 — without it Wan may copy the person from the reference reel."
+        "Add your My Model still (Image1) or select My Model before Video1 — without it Wan copies the person from the reference reel."
       );
       return;
     }
@@ -436,11 +438,15 @@ export function VideoDock({
       const hasStartingFrame = Boolean(jobReferenceUrl.trim());
       const hasRefVideos = jobReferenceVideoUrls.length > 0;
       const hasRefAudios = jobReferenceAudioUrls.length > 0;
+      const hasMyModelIdentity = Boolean(
+        jobCreator?.coverUrl || (jobCreator?.refs?.length ?? 0) > 0
+      );
       // Wan: image+video/audio refs → reference_* mode (not first_frame).
+      // Identity can come from the attached still OR the selected My Model.
       const useImageVideoRefs =
         Boolean(jobModel.supportsReferenceMedia) &&
         (hasRefVideos || hasRefAudios) &&
-        hasStartingFrame;
+        (hasStartingFrame || hasMyModelIdentity);
 
       if (acceptsPrompt && jobEnhance) {
         const enhanceRes = await fetch("/api/generation/enhance", {
@@ -498,16 +504,21 @@ export function VideoDock({
         ...(jobCreator?.refs.map((r) => r.publicUrl) ?? []),
       ].filter((url, i, arr) => Boolean(url) && arr.indexOf(url) === i);
 
-      // Image+video ref mode: still first (outfit+identity), then extra My Model
-      // face refs so Wan doesn't fall back to the person in @Video1.
+      // Image+video ref mode: My Model identity MUST be Image1.
+      // Prefer library cover/face refs first so a scene still cannot become
+      // the wrong person. Still (outfit pose) follows as Image2+.
       let imageUrls: string[];
       if (jobModel.requiresMotionVideo) {
         imageUrls = stillUrl ? [stillUrl] : [];
-      } else if (useImageVideoRefs && stillUrl) {
-        const extraId = identityUrls
-          .filter((u) => u !== stillUrl)
-          .slice(0, 2);
-        imageUrls = [stillUrl, ...extraId];
+      } else if (useImageVideoRefs) {
+        const idFirst = identityUrls.slice(0, 4);
+        const stillExtra =
+          stillUrl && !idFirst.includes(stillUrl) ? [stillUrl] : [];
+        // If no My Model library refs, fall back to the attached still alone.
+        imageUrls = (idFirst.length ? [...idFirst, ...stillExtra] : stillExtra)
+          .filter(Boolean)
+          .slice(0, 6);
+        if (!imageUrls.length && stillUrl) imageUrls = [stillUrl];
       } else if (stillUrl) {
         // first_frame path — only the still (extra My Model refs were overwriting outfit)
         imageUrls = [stillUrl];
@@ -516,7 +527,12 @@ export function VideoDock({
       }
 
       if (acceptsPrompt && useImageVideoRefs) {
-        // @Image1 = who. @Video1 = motion. @Audio1 = voice.
+        // Official Wan pattern: EDIT Video1, replace person with Image1.
+        // Server will seal again — client binds narrative + light seal.
+        const bound = bindWanNarrativeToImage1(
+          finalPrompt,
+          jobCreator?.name
+        );
         finalPrompt = [
           wanImageVideoRefSeal({
             modelName: jobCreator?.name,
@@ -524,11 +540,11 @@ export function VideoDock({
             imageCount: imageUrls.length,
             videoCount: jobReferenceVideoUrls.length,
             audioCount: jobReferenceAudioUrls.length,
-            prompt: finalPrompt,
+            prompt: bound,
           }),
-          finalPrompt,
-          videoNoTextRule(finalPrompt),
-        ].join(" ");
+          bound,
+          videoNoTextRule(bound),
+        ].join("\n\n");
       } else if (acceptsPrompt && hasStartingFrame) {
         // Pure first-frame / still→video — no reference clips.
         finalPrompt = [
@@ -773,11 +789,11 @@ export function VideoDock({
               From Prompt-from-video
             </p>
             <p className="mt-1">
-              <strong>@Image1</strong> = who appears (My Model).{" "}
-              <strong>@Video1</strong> = motion guidance ONLY — never the woman
-              in that reel. Paste your full recreate prompt (not just “@Video1
-              reference video”). Enhance stays off with @Video1 so identity
-              locks aren’t rewritten.
+              Wan will <strong>replace the person in Video1 with Image1</strong>{" "}
+              (My Model). Video1 is motion only — never use a freeze-frame of the
+              reel woman as Image1. Prefer Motion Control →{" "}
+              <strong>Wan Animate Replace</strong> if Wan 3.0 still copies the
+              reel face. Enhance stays off with Video1.
             </p>
           </div>
         ) : null}
@@ -906,7 +922,7 @@ export function VideoDock({
             <p className="gen-label">
               {videoModel?.supportsReferenceMedia
                 ? referenceVideoUrls.length
-                  ? "Reference image (@Image1)"
+                  ? "Image1 identity (My Model face — NOT a freeze from Video1)"
                   : "Starting frame (turns into video)"
                 : "Starting frame (turns into video)"}
             </p>
