@@ -1,5 +1,6 @@
 import {
   Clapperboard,
+  Download,
   Film,
   FolderOpen,
   Image,
@@ -17,6 +18,7 @@ import {
   Shirt,
   TrendingUp,
   Upload,
+  UserRound,
   Video,
   Wallet,
   type LucideIcon,
@@ -39,14 +41,40 @@ export const navigation: NavSection[] = [
     items: [
       { label: "Dashboard", href: "/", icon: LayoutDashboard },
       { label: "Jobs", href: "/jobs", icon: ListTodo },
+      { label: "My Models", href: "/models", icon: UserRound },
+    ],
+  },
+  {
+    title: "IMAGE GENERATION",
+    items: [
+      {
+        label: "Image Generation",
+        href: "/image/generate",
+        icon: Image,
+      },
+      {
+        label: "Flexible Image Generation",
+        href: "/image/flexible",
+        icon: Palette,
+      },
+      {
+        label: "Construct Image Generation",
+        href: "/image/construct",
+        icon: Layers,
+      },
     ],
   },
   {
     title: "VIDEO GENERATION",
     items: [
-      { label: "Single Video Generation", href: "/video/single", icon: Video },
-      { label: "Batch Video Generation", href: "/video/batch", icon: Layers },
-      { label: "LTX Video Generation", href: "/video/ltx", icon: Film },
+      { label: "Video Generation", href: "/video/single", icon: Video },
+      {
+        label: "Prompt from video",
+        href: "/video/prompt-from-clip",
+        icon: ScrollText,
+      },
+      { label: "Batch Video Generation", href: "/video/batch", icon: Film },
+      { label: "LTX Video Generation", href: "/video/ltx", icon: Clapperboard },
       {
         label: "Infinite Talk Generation",
         href: "/video/infinite-talk",
@@ -56,28 +84,18 @@ export const navigation: NavSection[] = [
       {
         label: "Video Creation",
         href: "/video/creation",
-        icon: Clapperboard,
-      },
-    ],
-  },
-  {
-    title: "IMAGE GENERATION",
-    items: [
-      {
-        label: "Flexible Image Generation",
-        href: "/image/flexible",
-        icon: Image,
-      },
-      {
-        label: "Construct Image Generation",
-        href: "/image/construct",
-        icon: Palette,
+        icon: MonitorPlay,
       },
     ],
   },
   {
     title: "TOOLS",
     items: [
+      {
+        label: "Instagram import",
+        href: "/tools/instagram-import",
+        icon: Download,
+      },
       { label: "Image Upscaler", href: "/tools/upscaler", icon: Upload },
       { label: "Voice Changer", href: "/tools/voice-changer", icon: Repeat },
       {

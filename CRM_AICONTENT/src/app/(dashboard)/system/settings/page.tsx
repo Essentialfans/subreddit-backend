@@ -11,6 +11,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { KieApiKeyCard } from "@/components/settings/kie-api-key-card";
 import { fetchOwnTelegramProfile } from "@/lib/profiles";
 
 export default function SettingsPage() {
@@ -44,8 +45,10 @@ export default function SettingsPage() {
     <div className="space-y-6">
       <DashboardHeader
         title="Settings"
-        subtitle="Account security and Telegram verification"
+        subtitle="Account security, Telegram, and generation providers"
       />
+
+      <KieApiKeyCard />
 
       <Card>
         <CardHeader>
