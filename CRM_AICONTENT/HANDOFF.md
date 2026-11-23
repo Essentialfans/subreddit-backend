@@ -7,8 +7,9 @@
 
 This package continues work from a Cursor chat that built the UI, wired Supabase auth, and connected a real Jobs system.
 
-**Start here:** open **`SETUP_ON_NEW_COMPUTER.md`** first (install steps).  
-Then read this file, then `CHAT_CONTEXT.md`.
+**Start here (self-host):** **`FRIEND_SETUP.md`** (full guide + Cloudflare).  
+Quick install notes: **`SETUP_ON_NEW_COMPUTER.md`**.  
+This handoff file is early project history — the product now includes generation docks, My Models, Outputs, Instagram import, etc.
 
 ---
 

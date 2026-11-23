@@ -2,15 +2,19 @@
 
 AI content generation and viral Instagram reels tracking dashboard.
 
+**New machine / friend self-host (Supabase + Telegram + kie.ai + Cloudflare):**  
+start with [`FRIEND_SETUP.md`](FRIEND_SETUP.md). Cloudflare Workers detail: [`docs/DEPLOY_CLOUDFLARE.md`](docs/DEPLOY_CLOUDFLARE.md).
+
 ## Getting started
 
 ```bash
 npm install
 cp .env.example .env.local
+# Fill YOUR Supabase + Telegram values (never reuse someone else's keys)
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). Sign up with email and password to create a real account.
+Open [http://localhost:3000](http://localhost:3000). Sign up, then add **your** kie.ai API key under System → Settings.
 
 ## Stack
 
@@ -70,3 +74,9 @@ NEXT_PUBLIC_TELEGRAM_BOT_USERNAME=YourBotUsernameWithoutAt
 - `npm run build` — Production build
 - `npm run start` — Start production server
 - `npm run lint` — Run ESLint
+- `npm run deploy` — Build + deploy to Cloudflare Workers (OpenNext)
+
+## Deploy (Cloudflare)
+
+See [`FRIEND_SETUP.md`](FRIEND_SETUP.md) §6 and [`docs/DEPLOY_CLOUDFLARE.md`](docs/DEPLOY_CLOUDFLARE.md).  
+Copy `wrangler.friend.example.jsonc` → edit your domain in `wrangler.jsonc` before first deploy.
