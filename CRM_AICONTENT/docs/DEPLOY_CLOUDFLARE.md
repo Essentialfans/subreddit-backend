@@ -1,19 +1,24 @@
-# Deploy AiInstaReels to ainstareel.com (Cloudflare Workers + OpenNext)
+# Deploy AiInstaReels (Cloudflare Workers + OpenNext)
+
+Friend / self-host checklist (Supabase + Telegram + kie.ai + this deploy): see **`../FRIEND_SETUP.md`**.
+
+Example production domain below uses `ainstareel.com` — replace with **your** domain in `wrangler.jsonc` (see `wrangler.friend.example.jsonc`).
 
 ## Prerequisites
 
-1. Domain **ainstareel.com** is an **Active** zone in Cloudflare (nameservers at Cloudflare).
+1. Your domain is an **Active** zone in Cloudflare (nameservers at Cloudflare), **or** start with `workers.dev` only.
 2. Cloudflare API token with at least:
    - Account → Workers Scripts → Edit
    - Account → Account Settings → Read
-   - Zone → Workers Routes → Edit (zone `ainstareel.com`)
-   - Zone → DNS → Edit (zone `ainstareel.com`) — for custom domain attachment
+   - Zone → Workers Routes → Edit (your zone)
+   - Zone → DNS → Edit (your zone) — for custom domain attachment
 3. Same secrets as local `.env.local` available at deploy time:
    - `NEXT_PUBLIC_SUPABASE_URL`
    - `NEXT_PUBLIC_SUPABASE_ANON_KEY` (and/or publishable key)
    - `SUPABASE_SERVICE_ROLE_KEY`
    - `TELEGRAM_BOT_TOKEN`
    - `NEXT_PUBLIC_TELEGRAM_BOT_USERNAME`
+   - `PROVIDER_SECRETS_KEY` (recommended)
 
 ## One-time project setup (already in repo)
 
